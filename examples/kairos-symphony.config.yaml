@@ -1,0 +1,135 @@
+# kairos-symphony.config.yaml — exemplo comentado v0.1
+#
+# Copie pra raiz do diretório onde o daemon vai rodar e adapte os valores.
+# Variáveis de ambiente com prefixo SYMPHONY_ fazem override (ex: SYMPHONY_LIMITS_CONCURRENT_AGENTS=10).
+# Flags CLI fazem override de tudo.
+
+# ─────────────────────────────────────────────────────────────────────
+# Tracker — onde as issues vivem
+# ─────────────────────────────────────────────────────────────────────
+tracker:
+  type: github                          # github | gitlab | jira | linear
+  repo: VilelaAI/novo-projeto           # owner/repo
+  token_env: GITHUB_TOKEN               # nome da env var (NÃO o valor)
+  poll_interval_ms: 30000               # 30s — frequência de polling
+  webhook:
+    enabled: false                      # opcional, reduz latência
+    listen_port: 8787
+    secret_env: SYMPHONY_WEBHOOK_SECRET
+
+# ─────────────────────────────────────────────────────────────────────
+# CLI — qual ferramenta de coding agent usar
+# ─────────────────────────────────────────────────────────────────────
+cli:
+  type: claude-code                     # claude-code | codex | opencode
+  binary_path: ~/.local/bin/claude      # opcional, auto-detecta se omitido
+  permission_mode: bypass               # plan | auto | bypass
+  model: opus-4-7                       # opcional, deixa default se omitido
+  enable_agent_teams: true              # apenas Claude Code com flag experimental
+
+# ─────────────────────────────────────────────────────────────────────
+# Fábrica — de onde vêm as personas dos agentes
+# ─────────────────────────────────────────────────────────────────────
+factory:
+  type: kairos-forge                    # kairos-forge | kairos-ai
+  installation: plugin                  # plugin (já instalado) | local-path
+  # local_path: /opt/kairos-forge       # só se installation: local-path
+
+# ─────────────────────────────────────────────────────────────────────
+# Workspaces — onde os git worktrees vivem
+# ─────────────────────────────────────────────────────────────────────
+workspaces:
+  root: /var/symphony/workspaces        # MUST ser path absoluto
+  base_branch: main                     # branch base dos worktrees
+  branch_naming_pattern: "symphony/{issue_id}"
+  retention_days: 7                     # workspaces de done > N dias são removidos
+  isolation: worktree                   # worktree | container
+
+# ─────────────────────────────────────────────────────────────────────
+# Routing — qual agente pega qual issue
+# ─────────────────────────────────────────────────────────────────────
+routing:
+  default_agent: laura-tech-lead        # se nenhuma regra casar
+
+  rules:
+    # Label explícita "agent:carlos-dba" sempre vai pra esse agente
+    # (regra implícita, sempre tem maior precedência)
+
+    # Roteamento por label de tipo
+    - label: bug
+      agent: lucas-backend
+    - label: feature
+      agent: laura-tech-lead             # ela coordena e aciona
+    - label: docs
+      agent: beatriz-docs
+    - label: security
+      agent: helena-security
+    - label: performance
+      agent: vinicius-performance
+    - label: dba
+      agent: carlos-dba
+
+# ─────────────────────────────────────────────────────────────────────
+# Limites e timeouts
+# ─────────────────────────────────────────────────────────────────────
+limits:
+  concurrent_agents: 5                  # quantos agentes em paralelo no host
+  stall_timeout_ms: 600000              # 10min sem heartbeat = stalled
+  max_retries: 3                        # tentativas após crash antes de bloquear
+  retry_backoff_ms: [60000, 240000, 960000]  # 1min, 4min, 16min
+
+  per_issue_timeout_ms: 7200000         # 2h — depois disso, mata e bloqueia
+  prompt_max_size_bytes: 1048576        # 1MB — issues maiores são truncadas
+
+# ─────────────────────────────────────────────────────────────────────
+# Persistência — onde o daemon guarda estado
+# ─────────────────────────────────────────────────────────────────────
+storage:
+  type: sqlite                          # sqlite | postgres | redis
+  path: /var/symphony/state.db          # se sqlite
+
+  # Para postgres:
+  # type: postgres
+  # url_env: SYMPHONY_PG_URL
+
+# ─────────────────────────────────────────────────────────────────────
+# Logging
+# ─────────────────────────────────────────────────────────────────────
+logging:
+  level: info                           # debug | info | warn | error
+  format: json                          # json | pretty
+  output: stdout                        # stdout | file:/var/log/symphony.log
+  language: pt-BR                       # pt-BR | en
+
+# ─────────────────────────────────────────────────────────────────────
+# Observabilidade (opcional)
+# ─────────────────────────────────────────────────────────────────────
+observability:
+  metrics:
+    enabled: true
+    listen_port: 9090
+    path: /metrics
+  health:
+    enabled: true
+    listen_port: 8080
+    path: /healthz
+
+# ─────────────────────────────────────────────────────────────────────
+# Segurança
+# ─────────────────────────────────────────────────────────────────────
+security:
+  forbid_direct_push_to_branches: [main, master, production]
+  scan_for_secrets_in_prompt: true      # bloqueia prompt com pattern de secret
+  require_human_approval_for_labels: [needs-approval, security-critical]
+
+# ─────────────────────────────────────────────────────────────────────
+# PRO (proprietário, comentado)
+# ─────────────────────────────────────────────────────────────────────
+# pro:
+#   advisor:
+#     enabled: true                     # requer kairos-ai PRO instalado
+#     escalation_severity: 4
+#   platform:
+#     enabled: true                     # envia métricas pro kairos-platform
+#     endpoint: https://platform.vilela.tech
+#     org_token_env: KAIROS_PLATFORM_TOKEN
