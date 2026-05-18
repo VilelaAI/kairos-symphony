@@ -5,3 +5,8 @@ export * from './domain/workspace.js';
 export * from './domain/pr.js';
 export * from './domain/transition.js';
 export * from './domain/correlation.js';
+export * from './ports/tracker.js';
+export * from './ports/cli.js';
+export * from './ports/factory.js';
+export * from './ports/store.js';
+export * from './ports/clock.js';
