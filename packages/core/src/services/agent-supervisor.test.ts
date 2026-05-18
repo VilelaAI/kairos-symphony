@@ -1,7 +1,7 @@
-import { describe, expect, it, vi } from 'vitest';
-import { writeFileSync, readFileSync, mkdtempSync, mkdirSync, existsSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { describe, expect, it, vi } from 'vitest';
 import type { AgentDescriptor } from '../domain/agent.js';
 import type { Issue } from '../domain/issue.js';
 import type { WorkspaceInfo } from '../domain/workspace.js';
@@ -9,8 +9,8 @@ import type { AgentProcess, CliPort, SpawnOpts } from '../ports/cli.js';
 import type { Clock, TimerHandle } from '../ports/clock.js';
 import type { StateStore } from '../ports/store.js';
 import type { TrackerPort } from '../ports/tracker.js';
-import { Logger } from './logger.js';
 import { AgentSupervisor } from './agent-supervisor.js';
+import { Logger } from './logger.js';
 
 class FakeClock implements Clock {
   private currentMs = new Date('2026-05-18T10:00:00Z').getTime();
@@ -28,12 +28,15 @@ class FakeClock implements Clock {
   }
   advance(ms: number) {
     const target = this.currentMs + ms;
-    let next = this.pending.filter((p) => p.fireAt <= target).sort((a, b) => a.fireAt - b.fireAt)[0];
+    const pickNext = () =>
+      this.pending.filter((p) => p.fireAt <= target).sort((a, b) => a.fireAt - b.fireAt)[0];
+    let next = pickNext();
     while (next) {
-      this.currentMs = next.fireAt;
-      this.pending = this.pending.filter((p) => p.handle !== next!.handle);
-      next.fn();
-      next = this.pending.filter((p) => p.fireAt <= target).sort((a, b) => a.fireAt - b.fireAt)[0];
+      const current = next;
+      this.currentMs = current.fireAt;
+      this.pending = this.pending.filter((p) => p.handle !== current.handle);
+      current.fn();
+      next = pickNext();
     }
     this.currentMs = target;
   }
@@ -69,13 +72,18 @@ class FakeCli implements CliPort {
     this.spawned.push(p);
     return p;
   }
-  last() {
-    return this.spawned[this.spawned.length - 1]!;
+  last(): FakeProc {
+    const p = this.spawned[this.spawned.length - 1];
+    if (!p) throw new Error('Nenhum processo spawned');
+    return p;
   }
 }
 
 class FakeTracker implements TrackerPort {
-  prByIssue = new Map<string, { number: number; url: string; headBranch: string; baseBranch: string; merged: boolean }>();
+  prByIssue = new Map<
+    string,
+    { number: number; url: string; headBranch: string; baseBranch: string; merged: boolean }
+  >();
   closed = new Set<string>();
   transitions: Array<{ issueId: string; to: string; reason: string }> = [];
   async fetchIssuesByState() {

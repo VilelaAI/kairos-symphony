@@ -1,7 +1,6 @@
 import { appendFileSync, writeFileSync } from 'node:fs';
 import type { AgentDescriptor } from '../domain/agent.js';
-import { newCorrelationId } from '../domain/correlation.js';
-import type { Issue, IssueId, IssueRecord } from '../domain/issue.js';
+import type { Issue, IssueId } from '../domain/issue.js';
 import type { WorkspaceInfo } from '../domain/workspace.js';
 import type { AgentProcess, CliPort } from '../ports/cli.js';
 import type { Clock, TimerHandle } from '../ports/clock.js';
@@ -130,7 +129,11 @@ export class AgentSupervisor {
       correlation_id: this.deps.correlationId,
       message: `PR #${pr.number} detectado para issue ${this.deps.issue.id}`,
     });
-    await this.deps.tracker.transitionState(this.deps.issue.id, 'review_pending', `PR #${pr.number}`);
+    await this.deps.tracker.transitionState(
+      this.deps.issue.id,
+      'review_pending',
+      `PR #${pr.number}`,
+    );
     this.markDispatchOutcome('pr_opened', 0);
     this.state = 'done';
     this.deps.onDone?.(this.deps.issue.id);
@@ -141,7 +144,9 @@ export class AgentSupervisor {
       this.markBlocked('symphony:max-retries-exceeded');
       return;
     }
-    const delay = this.deps.cfg.backoffMs[Math.min(this.retryCount - 1, this.deps.cfg.backoffMs.length - 1)] ?? 60_000;
+    const delay =
+      this.deps.cfg.backoffMs[Math.min(this.retryCount - 1, this.deps.cfg.backoffMs.length - 1)] ??
+      60_000;
     this.deps.log.info({
       event: 'agent_retrying',
       issue_id: this.deps.issue.id,
@@ -170,7 +175,10 @@ export class AgentSupervisor {
     this.deps.onDone?.(this.deps.issue.id);
   }
 
-  private markDispatchOutcome(outcome: 'stalled' | 'crashed' | 'exited_no_pr' | 'pr_opened', exitCode: number | null): void {
+  private markDispatchOutcome(
+    outcome: 'stalled' | 'crashed' | 'exited_no_pr' | 'pr_opened',
+    exitCode: number | null,
+  ): void {
     if (this.dispatchId === null) return;
     this.deps.store.updateDispatchOutcome(
       this.dispatchId,
