@@ -137,8 +137,37 @@ export class AgentSupervisor {
   }
 
   private scheduleRetry(): void {
-    // placeholder — Task 23 implementa backoff completo
+    if (this.retryCount > this.deps.cfg.maxRetries) {
+      this.markBlocked('symphony:max-retries-exceeded');
+      return;
+    }
+    const delay = this.deps.cfg.backoffMs[Math.min(this.retryCount - 1, this.deps.cfg.backoffMs.length - 1)] ?? 60_000;
+    this.deps.log.info({
+      event: 'agent_retrying',
+      issue_id: this.deps.issue.id,
+      agent_id: this.deps.agent.id,
+      attempt: this.retryCount,
+      delay_ms: delay,
+      correlation_id: this.deps.correlationId,
+      message: `Reagendando tentativa ${this.retryCount} em ${delay}ms`,
+    });
     this.state = 'retrying';
+    this.retryHandle = this.deps.clock.setTimeout(() => {
+      this.start();
+    }, delay);
+  }
+
+  private markBlocked(reason: string): void {
+    this.state = 'blocked';
+    this.deps.log.error({
+      event: 'agent_blocked',
+      issue_id: this.deps.issue.id,
+      reason,
+      correlation_id: this.deps.correlationId,
+      message: `Issue ${this.deps.issue.id} bloqueada: ${reason}`,
+    });
+    void this.deps.tracker.transitionState(this.deps.issue.id, 'blocked', reason);
+    this.deps.onDone?.(this.deps.issue.id);
   }
 
   private markDispatchOutcome(outcome: 'stalled' | 'crashed' | 'exited_no_pr' | 'pr_opened', exitCode: number | null): void {

@@ -387,3 +387,40 @@ describe('AgentSupervisor — exit', () => {
     expect(sup.state).toBe('retrying');
   });
 });
+
+describe('AgentSupervisor — retry/backoff', () => {
+  it('agenda retry com backoff [60s, 240s, 960s]', async () => {
+    const f = makeFixtures();
+    const cli = new FakeCli();
+    const clock = new FakeClock();
+    const sup = new AgentSupervisor({
+      issue: f.issue,
+      agent: f.agent,
+      workspace: f.workspace,
+      prompt: 'p',
+      correlationId: 'cid',
+      cli,
+      tracker: new FakeTracker(),
+      store: new FakeStore(),
+      clock,
+      log: new Logger({ level: 'error', write: () => undefined, now: () => new Date() }),
+      cfg: {
+        permissionMode: 'bypass',
+        binaryPath: '/x',
+        stallTimeoutMs: 600_000,
+        maxRetries: 3,
+        backoffMs: [60_000, 240_000, 960_000],
+      },
+    });
+    sup.start();
+    cli.last().finish(1); // crash
+    await new Promise((r) => setImmediate(r));
+    expect(sup.state).toBe('retrying');
+    // 59s não dispara; 60s dispara
+    clock.advance(59_000);
+    expect(cli.spawned.length).toBe(1);
+    clock.advance(2_000); // total 61s
+    expect(cli.spawned.length).toBe(2);
+    expect(sup.state).toBe('running');
+  });
+});
