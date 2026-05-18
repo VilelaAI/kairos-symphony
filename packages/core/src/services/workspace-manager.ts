@@ -99,6 +99,9 @@ export class WorkspaceManager {
   }
 
   listAllOnDisk(): Array<{ issueId: string; path: string }> {
-    throw new Error('not implemented');
+    if (!existsSync(this.opts.root)) return [];
+    return readdirSync(this.opts.root, { withFileTypes: true })
+      .filter((d) => d.isDirectory())
+      .map((d) => ({ issueId: d.name, path: resolve(this.opts.root, d.name) }));
   }
 }

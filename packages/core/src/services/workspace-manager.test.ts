@@ -72,3 +72,19 @@ describe('WorkspaceManager — create/cleanup', () => {
     }
   });
 });
+
+describe('WorkspaceManager — listAllOnDisk', () => {
+  it('lista subdirs do root e devolve {issueId, path}', () => {
+    const { repoPath, root } = setupRepoFixture();
+    try {
+      const wm = new WorkspaceManager({ root, baseBranch: 'main', repoPath });
+      wm.create('r#1');
+      wm.create('r#2');
+      const list = wm.listAllOnDisk().sort((a, b) => a.path.localeCompare(b.path));
+      expect(list.map((x) => x.issueId).sort()).toEqual(['r-1', 'r-2']);
+    } finally {
+      rmSync(repoPath, { recursive: true, force: true });
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
