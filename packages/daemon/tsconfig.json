@@ -1,0 +1,17 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "tsBuildInfoFile": "./dist/.tsbuildinfo"
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["**/*.test.ts", "dist"],
+  "references": [
+    { "path": "../core" },
+    { "path": "../adapter-github" },
+    { "path": "../cli-claude-code" },
+    { "path": "../factory-kairos-forge" }
+  ]
+}
