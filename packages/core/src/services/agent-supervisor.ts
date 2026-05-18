@@ -176,6 +176,26 @@ export class AgentSupervisor {
 
   private markBlocked(reason: string): void {
     this.state = 'blocked';
+    const now = this.deps.clock.now().toISOString();
+    const existing = this.deps.store.getIssue(this.deps.issue.id);
+    if (existing) {
+      this.deps.store.upsertIssue({
+        ...existing,
+        state: 'blocked',
+        blockedReason: reason,
+        finishedAt: now,
+        lastSyncedAt: now,
+      });
+      this.deps.store.recordTransition({
+        issueId: this.deps.issue.id,
+        fromState: existing.state,
+        toState: 'blocked',
+        reason,
+        evidence: null,
+        correlationId: this.deps.correlationId,
+        occurredAt: now,
+      });
+    }
     this.deps.log.error({
       event: 'agent_blocked',
       issue_id: this.deps.issue.id,
