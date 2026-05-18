@@ -129,3 +129,54 @@ describe('Reconciler — cenário issue closed', () => {
     expect(findings).toHaveLength(1);
   });
 });
+
+describe('Reconciler — label transitions', () => {
+  it('cenário 3: issue em blocked no DB mas ready no tracker → recordar transição (volta a despachar)', async () => {
+    const tracker = new FakeTracker();
+    tracker.issuesByState.set('ready', [
+      {
+        id: 'r#1',
+        number: 1,
+        title: 't',
+        body: 'b',
+        labels: [],
+        state: 'ready',
+      },
+    ]);
+    const store = new FakeStore();
+    store.upsertIssue({
+      issueId: 'r#1',
+      trackerType: 'github',
+      state: 'blocked',
+      agentId: 'lucas',
+      workspacePath: '/x',
+      branchName: 'symphony/r-1',
+      startedAt: null,
+      finishedAt: null,
+      retryCount: 0,
+      prNumber: null,
+      correlationId: 'cid',
+      lastSyncedAt: '2026-05-18T10:00:00.000Z',
+      blockedReason: 'symphony:max-retries-exceeded',
+    });
+    const reconciler = new Reconciler({
+      tracker,
+      store,
+      log: logger,
+      now: () => new Date('2026-05-18T11:00:00Z'),
+      activeSupervisors: () => new Map(),
+      cleanupWorkspace: () => undefined,
+      listWorkspacesOnDisk: () => [],
+    });
+    const findings = await reconciler.run({ dryRun: false });
+    expect(findings).toContainEqual<ReconciliationFinding>({
+      scenario: 'label_blocked_removed',
+      issueId: 'r#1',
+      action: 'reset_to_ready',
+    });
+    // store deve ter a issue agora como ready, retryCount=0
+    expect(store.getIssue('r#1')?.state).toBe('ready');
+    expect(store.getIssue('r#1')?.retryCount).toBe(0);
+    expect(store.getIssue('r#1')?.blockedReason).toBeNull();
+  });
+});

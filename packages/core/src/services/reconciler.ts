@@ -38,6 +38,7 @@ export class Reconciler {
   async run({ dryRun }: { dryRun: boolean }): Promise<ReconciliationFinding[]> {
     const findings: ReconciliationFinding[] = [];
     await this.scenarioIssueClosed(findings, dryRun);
+    await this.scenarioLabelBlockedRemoved(findings, dryRun);
     return findings;
   }
 
@@ -64,6 +65,48 @@ export class Reconciler {
       if (!dryRun) {
         sup.terminate();
         this.deps.cleanupWorkspace(issueId);
+      }
+    }
+  }
+
+  /**
+   * Cenário 3: issue marcada como blocked no DB voltou para ready no tracker
+   * (humano destravou manualmente). Resseta retryCount/blockedReason e volta
+   * para a fila — próximo `Daemon.tick()` despachará novamente.
+   *
+   * Nota: o cenário 2 (label ready removida entre poll e dispatch) é tratado
+   * naturalmente pelo `Daemon.tick()`, que faz `fetchIssuesByState("ready")`
+   * imediatamente antes do despacho. Se a label foi removida, a issue não
+   * aparece na lista — sem necessidade de tratamento explícito aqui.
+   */
+  private async scenarioLabelBlockedRemoved(
+    findings: ReconciliationFinding[],
+    dryRun: boolean,
+  ): Promise<void> {
+    const readyIssues = await this.deps.tracker.fetchIssuesByState('ready');
+    for (const issue of readyIssues) {
+      const record = this.deps.store.getIssue(issue.id);
+      if (!record || record.state !== 'blocked') continue;
+      findings.push({
+        scenario: 'label_blocked_removed',
+        issueId: issue.id,
+        action: 'reset_to_ready',
+      });
+      this.deps.log.info({
+        event: 'state_reconciled',
+        issue_id: issue.id,
+        scenario: 'label_blocked_removed',
+        dry_run: dryRun,
+        message: `Issue ${issue.id} foi destravada manualmente — voltando para fila`,
+      });
+      if (!dryRun) {
+        this.deps.store.upsertIssue({
+          ...record,
+          state: 'ready',
+          retryCount: 0,
+          blockedReason: null,
+          lastSyncedAt: this.deps.now().toISOString(),
+        });
       }
     }
   }
