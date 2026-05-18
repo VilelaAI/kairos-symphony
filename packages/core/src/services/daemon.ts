@@ -2,13 +2,14 @@ import { newCorrelationId } from '../domain/correlation.js';
 import type { Issue, IssueId } from '../domain/issue.js';
 import type { WorkspaceInfo } from '../domain/workspace.js';
 import type { CliPort } from '../ports/cli.js';
-import type { Clock } from '../ports/clock.js';
+import type { Clock, TimerHandle } from '../ports/clock.js';
 import type { FactoryPort } from '../ports/factory.js';
 import type { StateStore } from '../ports/store.js';
 import type { TrackerPort } from '../ports/tracker.js';
 import { AgentSupervisor, type SupervisorCfg } from './agent-supervisor.js';
 import type { Logger } from './logger.js';
 import { type PromptBuilder, PromptTooLargeError } from './prompt-builder.js';
+import type { Reconciler } from './reconciler.js';
 import type { Router } from './router.js';
 import { type WorkspaceManager, WorktreeCreateFailed } from './workspace-manager.js';
 
@@ -26,11 +27,15 @@ export interface DaemonDeps {
   workspaceManager: WorkspaceManager;
   router: Router;
   promptBuilder: PromptBuilder;
+  reconciler: Reconciler;
+  pollIntervalMs: number;
   cfg: DaemonCfg;
 }
 
 export class Daemon {
   private readonly supervisors = new Map<IssueId, AgentSupervisor>();
+  private timer: TimerHandle | null = null;
+  private running = false;
 
   constructor(private readonly deps: DaemonDeps) {}
 
@@ -116,6 +121,7 @@ export class Daemon {
   }
 
   async tick(): Promise<void> {
+    await this.deps.reconciler.run({ dryRun: false });
     const ready = await this.deps.tracker.fetchIssuesByState('ready');
     for (const issue of ready) {
       if (this.supervisors.size >= this.deps.cfg.concurrentLimit) break;
@@ -147,6 +153,44 @@ export class Daemon {
 
   removeSupervisor(issueId: IssueId): void {
     this.supervisors.delete(issueId);
+  }
+
+  async start(): Promise<void> {
+    this.running = true;
+    this.deps.log.info({ event: 'daemon_started', message: 'Symphony daemon iniciado' });
+    const loop = async (): Promise<void> => {
+      if (!this.running) return;
+      try {
+        await this.tick();
+      } catch (err) {
+        this.deps.log.error({
+          event: 'tick_failed',
+          error: err instanceof Error ? err.message : String(err),
+          message: 'Erro no tick principal',
+        });
+      }
+      if (this.running) {
+        this.timer = this.deps.clock.setTimeout(() => {
+          void loop();
+        }, this.deps.pollIntervalMs);
+      }
+    };
+    await loop();
+  }
+
+  async stop(): Promise<void> {
+    this.deps.log.info({
+      event: 'daemon_shutting_down',
+      message: 'Symphony daemon encerrando',
+    });
+    this.running = false;
+    if (this.timer !== null) {
+      this.deps.clock.clearTimeout(this.timer);
+      this.timer = null;
+    }
+    for (const [, sup] of this.supervisors) {
+      sup.terminate();
+    }
   }
 
   private async transitionBlocked(

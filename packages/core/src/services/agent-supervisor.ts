@@ -94,6 +94,18 @@ export class AgentSupervisor {
     });
   }
 
+  terminate(): void {
+    if (this.state === 'done' || this.state === 'blocked' || this.state === 'terminating') {
+      return;
+    }
+    this.state = 'terminating';
+    this.proc?.kill('SIGTERM');
+    if (this.retryHandle !== null) {
+      this.deps.clock.clearTimeout(this.retryHandle);
+      this.retryHandle = null;
+    }
+  }
+
   async tick(): Promise<void> {
     if (this.state !== 'running') return;
     const ageMs = this.deps.clock.now().getTime() - this.lastOutputAt;

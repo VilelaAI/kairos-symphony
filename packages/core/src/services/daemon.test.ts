@@ -12,6 +12,7 @@ import type { TrackerPort } from '../ports/tracker.js';
 import { Daemon } from './daemon.js';
 import { Logger } from './logger.js';
 import { PromptBuilder } from './prompt-builder.js';
+import { Reconciler } from './reconciler.js';
 import { Router } from './router.js';
 import { SqliteStateStore } from './store/sqlite.js';
 import { WorkspaceManager } from './workspace-manager.js';
@@ -90,7 +91,18 @@ describe('Daemon.dispatch', () => {
       const wm = new WorkspaceManager({ root, baseBranch: 'main', repoPath });
       const router = new Router({ defaultAgent: 'default-agent', rules: [] });
       const pb = new PromptBuilder({ maxBytes: 1_048_576 });
-      const daemon = new Daemon({
+      // biome-ignore lint/style/useConst: forward reference for reconciler closure
+      let daemon: Daemon;
+      const reconciler = new Reconciler({
+        tracker,
+        store,
+        log,
+        now: () => new Date('2026-05-18T10:00:00Z'),
+        activeSupervisors: () => daemon.activeSupervisors() as never,
+        cleanupWorkspace: (id) => wm.cleanup(id),
+        listWorkspacesOnDisk: () => wm.listAllOnDisk(),
+      });
+      daemon = new Daemon({
         tracker,
         cli,
         factory,
@@ -100,6 +112,8 @@ describe('Daemon.dispatch', () => {
         workspaceManager: wm,
         router,
         promptBuilder: pb,
+        reconciler,
+        pollIntervalMs: 30_000,
         cfg: {
           concurrentLimit: 5,
           stallTimeoutMs: 600_000,
@@ -152,7 +166,18 @@ describe('Daemon.tick', () => {
       const wm = new WorkspaceManager({ root, baseBranch: 'main', repoPath });
       const router = new Router({ defaultAgent: 'default-agent', rules: [] });
       const pb = new PromptBuilder({ maxBytes: 1_048_576 });
-      const daemon = new Daemon({
+      // biome-ignore lint/style/useConst: forward reference for reconciler closure
+      let daemon: Daemon;
+      const reconciler = new Reconciler({
+        tracker,
+        store,
+        log,
+        now: () => new Date('2026-05-18T10:00:00Z'),
+        activeSupervisors: () => daemon.activeSupervisors() as never,
+        cleanupWorkspace: (id) => wm.cleanup(id),
+        listWorkspacesOnDisk: () => wm.listAllOnDisk(),
+      });
+      daemon = new Daemon({
         tracker,
         cli,
         factory,
@@ -162,6 +187,8 @@ describe('Daemon.tick', () => {
         workspaceManager: wm,
         router,
         promptBuilder: pb,
+        reconciler,
+        pollIntervalMs: 30_000,
         cfg: {
           concurrentLimit: 5,
           stallTimeoutMs: 600_000,
@@ -200,7 +227,18 @@ describe('Daemon.tick', () => {
       const wm = new WorkspaceManager({ root, baseBranch: 'main', repoPath });
       const router = new Router({ defaultAgent: 'default-agent', rules: [] });
       const pb = new PromptBuilder({ maxBytes: 1_048_576 });
-      const daemon = new Daemon({
+      // biome-ignore lint/style/useConst: forward reference for reconciler closure
+      let daemon: Daemon;
+      const reconciler = new Reconciler({
+        tracker,
+        store,
+        log,
+        now: () => new Date('2026-05-18T10:00:00Z'),
+        activeSupervisors: () => daemon.activeSupervisors() as never,
+        cleanupWorkspace: (id) => wm.cleanup(id),
+        listWorkspacesOnDisk: () => wm.listAllOnDisk(),
+      });
+      daemon = new Daemon({
         tracker,
         cli,
         factory,
@@ -210,6 +248,8 @@ describe('Daemon.tick', () => {
         workspaceManager: wm,
         router,
         promptBuilder: pb,
+        reconciler,
+        pollIntervalMs: 30_000,
         cfg: {
           concurrentLimit: 3,
           stallTimeoutMs: 600_000,
