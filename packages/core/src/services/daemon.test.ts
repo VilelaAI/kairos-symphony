@@ -135,3 +135,96 @@ describe('Daemon.dispatch', () => {
     }
   });
 });
+
+describe('Daemon.tick', () => {
+  it('chama reconciliação, busca ready, despacha dentro do limite, monitora supervisores', async () => {
+    const { repoPath, root } = setupRepo();
+    try {
+      const cli = new FakeCli();
+      const tracker = new FakeTracker();
+      tracker.ready = [
+        { id: 'r#1', number: 1, title: 't', body: 'b', labels: [], state: 'ready' },
+        { id: 'r#2', number: 2, title: 't', body: 'b', labels: [], state: 'ready' },
+      ];
+      const factory = new FakeFactory();
+      const store = new SqliteStateStore({ path: ':memory:' });
+      const log = new Logger({ level: 'error', write: () => undefined, now: () => new Date() });
+      const wm = new WorkspaceManager({ root, baseBranch: 'main', repoPath });
+      const router = new Router({ defaultAgent: 'default-agent', rules: [] });
+      const pb = new PromptBuilder({ maxBytes: 1_048_576 });
+      const daemon = new Daemon({
+        tracker,
+        cli,
+        factory,
+        store,
+        log,
+        clock: new FakeClock(),
+        workspaceManager: wm,
+        router,
+        promptBuilder: pb,
+        cfg: {
+          concurrentLimit: 5,
+          stallTimeoutMs: 600_000,
+          maxRetries: 3,
+          backoffMs: [60_000],
+          permissionMode: 'bypass',
+          binaryPath: '/usr/bin/true',
+        },
+      });
+      await daemon.tick();
+      expect(cli.spawned).toHaveLength(2);
+      expect(store.listInState('in_progress')).toHaveLength(2);
+      store.close();
+    } finally {
+      rmSync(repoPath, { recursive: true, force: true });
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('respeita concurrentLimit', async () => {
+    const { repoPath, root } = setupRepo();
+    try {
+      const cli = new FakeCli();
+      const tracker = new FakeTracker();
+      tracker.ready = Array.from({ length: 10 }, (_, i) => ({
+        id: `r#${i}`,
+        number: i,
+        title: 't',
+        body: 'b',
+        labels: [],
+        state: 'ready' as const,
+      }));
+      const factory = new FakeFactory();
+      const store = new SqliteStateStore({ path: ':memory:' });
+      const log = new Logger({ level: 'error', write: () => undefined, now: () => new Date() });
+      const wm = new WorkspaceManager({ root, baseBranch: 'main', repoPath });
+      const router = new Router({ defaultAgent: 'default-agent', rules: [] });
+      const pb = new PromptBuilder({ maxBytes: 1_048_576 });
+      const daemon = new Daemon({
+        tracker,
+        cli,
+        factory,
+        store,
+        log,
+        clock: new FakeClock(),
+        workspaceManager: wm,
+        router,
+        promptBuilder: pb,
+        cfg: {
+          concurrentLimit: 3,
+          stallTimeoutMs: 600_000,
+          maxRetries: 3,
+          backoffMs: [60_000],
+          permissionMode: 'bypass',
+          binaryPath: '/usr/bin/true',
+        },
+      });
+      await daemon.tick();
+      expect(cli.spawned).toHaveLength(3);
+      store.close();
+    } finally {
+      rmSync(repoPath, { recursive: true, force: true });
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});

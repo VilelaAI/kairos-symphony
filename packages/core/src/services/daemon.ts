@@ -115,6 +115,36 @@ export class Daemon {
     });
   }
 
+  async tick(): Promise<void> {
+    const ready = await this.deps.tracker.fetchIssuesByState('ready');
+    for (const issue of ready) {
+      if (this.supervisors.size >= this.deps.cfg.concurrentLimit) break;
+      if (this.supervisors.has(issue.id)) continue;
+      await this.dispatch(issue);
+    }
+    for (const sup of [...this.supervisors.values()]) {
+      await sup.tick();
+    }
+    const done = await this.deps.tracker.fetchIssuesByState('done');
+    for (const issue of done) {
+      const record = this.deps.store.getIssue(issue.id);
+      if (!record || record.state === 'done') continue;
+      this.deps.workspaceManager.cleanup(issue.id);
+      const now = this.deps.clock.now().toISOString();
+      this.deps.store.upsertIssue({
+        ...record,
+        state: 'done',
+        finishedAt: now,
+        lastSyncedAt: now,
+      });
+      this.deps.log.info({
+        event: 'workspace_cleaned',
+        issue_id: issue.id,
+        message: `Workspace removido para issue ${issue.id} (done)`,
+      });
+    }
+  }
+
   removeSupervisor(issueId: IssueId): void {
     this.supervisors.delete(issueId);
   }
