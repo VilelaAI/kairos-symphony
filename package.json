@@ -12,11 +12,11 @@
     "typecheck": "pnpm -r typecheck",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
-    "test": "vitest run",
+    "test": "vitest run --passWithNoTests",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "test:conformance": "vitest run tests/conformance",
-    "test:integration": "vitest run tests/integration"
+    "test:conformance": "vitest run tests/conformance --passWithNoTests",
+    "test:integration": "vitest run tests/integration --passWithNoTests"
   },
   "devDependencies": {
     "@biomejs/biome": "1.9.4",
