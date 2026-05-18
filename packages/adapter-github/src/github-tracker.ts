@@ -122,8 +122,25 @@ export class GithubTracker implements TrackerPort {
       }
     }
   }
-  async detectLinkedPR(_issueId: IssueId): Promise<PullRequestRef | null> {
-    throw new Error('not implemented');
+  async detectLinkedPR(id: IssueId): Promise<PullRequestRef | null> {
+    const num = Number.parseInt(id.split('#')[1] ?? '0', 10);
+    const safeBranch = `symphony/${this.opts.owner}-${this.opts.repo}-${num}`;
+    const q = [
+      `repo:${this.opts.owner}/${this.opts.repo}`,
+      'is:pr',
+      'is:open',
+      `(head:${safeBranch} OR "Closes #${num}" OR "closes #${num}")`,
+    ].join(' ');
+    const { data } = await this.oc.search.issuesAndPullRequests({ q });
+    const found = data.items[0];
+    if (!found) return null;
+    return {
+      number: found.number,
+      url: found.html_url,
+      headBranch: (found as { head?: { ref: string } }).head?.ref ?? '',
+      baseBranch: (found as { base?: { ref: string } }).base?.ref ?? '',
+      merged: false,
+    };
   }
   async isIssueClosed(_issueId: IssueId): Promise<boolean> {
     throw new Error('not implemented');

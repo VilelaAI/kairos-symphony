@@ -100,3 +100,47 @@ describe('GithubTracker.transitionState', () => {
     expect(patched).toEqual({ state: 'closed' });
   });
 });
+
+describe('GithubTracker.detectLinkedPR', () => {
+  it('encontra PR open com branch symphony/<id> ou que cita Closes #N', async () => {
+    server.use(
+      http.get('https://api.github.com/search/issues', ({ request }) => {
+        const url = new URL(request.url);
+        const q = url.searchParams.get('q') ?? '';
+        expect(q).toContain('repo:VilelaAI/test');
+        expect(q).toContain('is:pr');
+        expect(q).toContain('is:open');
+        return HttpResponse.json({
+          items: [
+            {
+              number: 99,
+              html_url: 'https://github.com/VilelaAI/test/pull/99',
+              head: { ref: 'symphony/VilelaAI-test-42' },
+              base: { ref: 'main' },
+              body: 'Closes #42',
+              state: 'open',
+              pull_request: { merged_at: null },
+            },
+          ],
+        });
+      }),
+    );
+    const tracker = new GithubTracker({ owner: 'VilelaAI', repo: 'test', token: 'x' });
+    const pr = await tracker.detectLinkedPR('VilelaAI/test#42');
+    expect(pr).toEqual({
+      number: 99,
+      url: 'https://github.com/VilelaAI/test/pull/99',
+      headBranch: 'symphony/VilelaAI-test-42',
+      baseBranch: 'main',
+      merged: false,
+    });
+  });
+
+  it('retorna null quando não há PR', async () => {
+    server.use(
+      http.get('https://api.github.com/search/issues', () => HttpResponse.json({ items: [] })),
+    );
+    const tracker = new GithubTracker({ owner: 'VilelaAI', repo: 'test', token: 'x' });
+    expect(await tracker.detectLinkedPR('VilelaAI/test#42')).toBeNull();
+  });
+});
