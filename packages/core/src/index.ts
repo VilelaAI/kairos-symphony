@@ -13,3 +13,4 @@ export * from './ports/clock.js';
 export * from './services/logger.js';
 export * from './services/prompt-builder.js';
 export * from './services/router.js';
+export * from './services/system-clock.js';
