@@ -279,3 +279,49 @@ describe('AgentSupervisor — stall', () => {
     expect(sup.state).toBe('running');
   });
 });
+
+describe('AgentSupervisor — PR detectado', () => {
+  it('transiciona para review_pending e chama onDone', async () => {
+    const f = makeFixtures();
+    const tracker = new FakeTracker();
+    tracker.prByIssue.set('r#1', {
+      number: 99,
+      url: 'https://github.com/r/pull/99',
+      headBranch: 'symphony/r-1',
+      baseBranch: 'main',
+      merged: false,
+    });
+    const cli = new FakeCli();
+    const clock = new FakeClock();
+    const onDone = vi.fn();
+    const sup = new AgentSupervisor({
+      issue: f.issue,
+      agent: f.agent,
+      workspace: f.workspace,
+      prompt: 'p',
+      correlationId: 'cid',
+      cli,
+      tracker,
+      store: new FakeStore(),
+      clock,
+      log: new Logger({ level: 'error', write: () => undefined, now: () => new Date() }),
+      cfg: {
+        permissionMode: 'bypass',
+        binaryPath: '/x',
+        stallTimeoutMs: 600_000,
+        maxRetries: 3,
+        backoffMs: [60_000, 240_000, 960_000],
+      },
+      onDone,
+    });
+    sup.start();
+    await sup.tick();
+    expect(tracker.transitions).toContainEqual({
+      issueId: 'r#1',
+      to: 'review_pending',
+      reason: 'PR #99',
+    });
+    expect(onDone).toHaveBeenCalledWith('r#1');
+    expect(sup.state).toBe('done');
+  });
+});

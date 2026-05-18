@@ -122,8 +122,18 @@ export class AgentSupervisor {
     this.scheduleRetry();
   }
 
-  private async onPRDetected(_pr: unknown): Promise<void> {
-    // placeholder — próxima task
+  private async onPRDetected(pr: import('../domain/pr.js').PullRequestRef): Promise<void> {
+    this.deps.log.info({
+      event: 'pr_detected',
+      issue_id: this.deps.issue.id,
+      pr_number: pr.number,
+      correlation_id: this.deps.correlationId,
+      message: `PR #${pr.number} detectado para issue ${this.deps.issue.id}`,
+    });
+    await this.deps.tracker.transitionState(this.deps.issue.id, 'review_pending', `PR #${pr.number}`);
+    this.markDispatchOutcome('pr_opened', 0);
+    this.state = 'done';
+    this.deps.onDone?.(this.deps.issue.id);
   }
 
   private scheduleRetry(): void {
