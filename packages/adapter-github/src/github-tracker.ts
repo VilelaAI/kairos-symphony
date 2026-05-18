@@ -87,8 +87,40 @@ export class GithubTracker implements TrackerPort {
       });
   }
 
-  async transitionState(_issueId: IssueId, _to: IssueState, _reason: string): Promise<void> {
-    throw new Error('not implemented');
+  async transitionState(id: IssueId, to: IssueState, _reason: string): Promise<void> {
+    const num = Number.parseInt(id.split('#')[1] ?? '0', 10);
+    if (to === 'done') {
+      await this.oc.issues.update({
+        owner: this.opts.owner,
+        repo: this.opts.repo,
+        issue_number: num,
+        state: 'closed',
+      });
+      return;
+    }
+    const addLabel = STATE_TO_LABEL[to];
+    if (addLabel) {
+      await this.oc.issues.addLabels({
+        owner: this.opts.owner,
+        repo: this.opts.repo,
+        issue_number: num,
+        labels: [addLabel],
+      });
+    }
+    for (const other of Object.values(STATE_TO_LABEL)) {
+      if (other && other !== addLabel) {
+        try {
+          await this.oc.issues.removeLabel({
+            owner: this.opts.owner,
+            repo: this.opts.repo,
+            issue_number: num,
+            name: other,
+          });
+        } catch (err: unknown) {
+          if ((err as { status?: number }).status !== 404) throw err;
+        }
+      }
+    }
   }
   async detectLinkedPR(_issueId: IssueId): Promise<PullRequestRef | null> {
     throw new Error('not implemented');

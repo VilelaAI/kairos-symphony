@@ -60,3 +60,43 @@ describe('GithubTracker.fetchIssuesByState', () => {
     expect(issues.map((i) => i.number)).toEqual([1]);
   });
 });
+
+describe('GithubTracker.transitionState', () => {
+  it('para in_progress: adiciona label symphony:in-progress e remove symphony:ready', async () => {
+    const addCalls: unknown[] = [];
+    const removeCalls: string[] = [];
+    server.use(
+      http.post(
+        'https://api.github.com/repos/VilelaAI/test/issues/42/labels',
+        async ({ request }) => {
+          addCalls.push(await request.json());
+          return HttpResponse.json([]);
+        },
+      ),
+      http.delete(
+        'https://api.github.com/repos/VilelaAI/test/issues/42/labels/:label',
+        ({ params }) => {
+          removeCalls.push(params.label as string);
+          return HttpResponse.json([]);
+        },
+      ),
+    );
+    const tracker = new GithubTracker({ owner: 'VilelaAI', repo: 'test', token: 'x' });
+    await tracker.transitionState('VilelaAI/test#42', 'in_progress', 'dispatch');
+    expect(addCalls).toEqual([{ labels: ['symphony:in-progress'] }]);
+    expect(removeCalls).toContain('symphony:ready');
+  });
+
+  it('para done: fecha a issue (não usa label)', async () => {
+    let patched: unknown = null;
+    server.use(
+      http.patch('https://api.github.com/repos/VilelaAI/test/issues/42', async ({ request }) => {
+        patched = await request.json();
+        return HttpResponse.json({});
+      }),
+    );
+    const tracker = new GithubTracker({ owner: 'VilelaAI', repo: 'test', token: 'x' });
+    await tracker.transitionState('VilelaAI/test#42', 'done', 'merged');
+    expect(patched).toEqual({ state: 'closed' });
+  });
+});
