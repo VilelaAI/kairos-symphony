@@ -39,6 +39,7 @@ export class Reconciler {
     const findings: ReconciliationFinding[] = [];
     await this.scenarioIssueClosed(findings, dryRun);
     await this.scenarioLabelBlockedRemoved(findings, dryRun);
+    await this.scenarioPrMergedExternally(findings, dryRun);
     return findings;
   }
 
@@ -105,6 +106,48 @@ export class Reconciler {
           state: 'ready',
           retryCount: 0,
           blockedReason: null,
+          lastSyncedAt: this.deps.now().toISOString(),
+        });
+      }
+    }
+  }
+
+  /**
+   * Cenário 4: issue em review_pending cujo PR foi mergeado externamente
+   * (humano fez merge no GitHub). Transição local → done sem rodar agente.
+   */
+  private async scenarioPrMergedExternally(
+    findings: ReconciliationFinding[],
+    dryRun: boolean,
+  ): Promise<void> {
+    const reviewPending = this.deps.store.listInState('review_pending');
+    for (const record of reviewPending) {
+      if (record.prNumber === null) continue;
+      const merged = await this.deps.tracker.isPRMerged(record.prNumber);
+      if (!merged) continue;
+      findings.push({
+        scenario: 'pr_merged_externally',
+        issueId: record.issueId,
+        action: 'mark_done',
+      });
+      this.deps.log.info({
+        event: 'state_reconciled',
+        issue_id: record.issueId,
+        scenario: 'pr_merged_externally',
+        pr_number: record.prNumber,
+        dry_run: dryRun,
+        message: `PR #${record.prNumber} mergeado externamente — marcando done`,
+      });
+      if (!dryRun) {
+        await this.deps.tracker.transitionState(
+          record.issueId,
+          'done',
+          `PR #${record.prNumber} mergeado`,
+        );
+        this.deps.store.upsertIssue({
+          ...record,
+          state: 'done',
+          finishedAt: this.deps.now().toISOString(),
           lastSyncedAt: this.deps.now().toISOString(),
         });
       }

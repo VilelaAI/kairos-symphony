@@ -180,3 +180,46 @@ describe('Reconciler — label transitions', () => {
     expect(store.getIssue('r#1')?.blockedReason).toBeNull();
   });
 });
+
+describe('Reconciler — PR mergeado externamente', () => {
+  it('issue em review_pending cujo PR foi mergeado → done', async () => {
+    const tracker = new FakeTracker();
+    tracker.merged.add(99);
+    const store = new FakeStore();
+    store.upsertIssue({
+      issueId: 'r#1',
+      trackerType: 'github',
+      state: 'review_pending',
+      agentId: 'lucas',
+      workspacePath: '/x',
+      branchName: 'symphony/r-1',
+      startedAt: '2026-05-18T10:00:00.000Z',
+      finishedAt: null,
+      retryCount: 0,
+      prNumber: 99,
+      correlationId: 'cid',
+      lastSyncedAt: '2026-05-18T10:00:00.000Z',
+      blockedReason: null,
+    });
+    const reconciler = new Reconciler({
+      tracker,
+      store,
+      log: logger,
+      now: () => new Date('2026-05-18T12:00:00Z'),
+      activeSupervisors: () => new Map(),
+      cleanupWorkspace: () => undefined,
+      listWorkspacesOnDisk: () => [],
+    });
+    const findings = await reconciler.run({ dryRun: false });
+    expect(findings).toContainEqual<ReconciliationFinding>({
+      scenario: 'pr_merged_externally',
+      issueId: 'r#1',
+      action: 'mark_done',
+    });
+    expect(tracker.transitions).toContainEqual({
+      issueId: 'r#1',
+      to: 'done',
+      reason: 'PR #99 mergeado',
+    });
+  });
+});
