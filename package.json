@@ -1,0 +1,28 @@
+{
+  "name": "kairos-symphony-monorepo",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.5.0",
+    "pnpm": ">=11"
+  },
+  "scripts": {
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "test": "vitest run --passWithNoTests",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "test:conformance": "vitest run tests/conformance --passWithNoTests",
+    "test:integration": "vitest run tests/integration --passWithNoTests"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "1.9.4",
+    "@vitest/coverage-v8": "2.1.8",
+    "tsx": "4.19.2",
+    "typescript": "5.7.2",
+    "vitest": "2.1.8"
+  }
+}

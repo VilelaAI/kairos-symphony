@@ -72,6 +72,25 @@ Um daemon polla seu tracker a cada N segundos, pega issues no estado `ready`, cr
 - Não é orquestrador remoto multi-host — é **local-first**: o daemon roda no mesmo host onde você trabalha (laptop, devbox ou VPS pessoal). Sem control plane / data plane separados, sem runner distribuído. Operação remota gerenciada fica no `kairos-platform` (PRO). Ver §1.1 da [SPEC](SPEC.md).
 - Não tem versão hosted/SaaS no v1 — você roda no seu VPS ou devbox.
 
+## Running (M1 walking skeleton)
+
+Após `pnpm install && pnpm build`, o binário está em `packages/daemon/dist/bin.js`:
+
+```bash
+node packages/daemon/dist/bin.js --help
+```
+
+Subcomandos disponíveis no M1:
+
+| Comando | Descrição |
+|---|---|
+| `start` | Sobe o daemon (foreground); polling do tracker, dispatch e monitoramento |
+| `reconcile [--dry-run]` | Roda uma rodada de reconciliação (§9.1); com `--dry-run`, só lista divergências |
+| `ps` | Lista issues ativas (estado != `done`) lendo o SQLite |
+| `attach <issue_id>` | `tail -f` do terminal.log do agente daquela issue |
+
+Para o roteiro end-to-end ver [docs/M1-DEMO.md](docs/M1-DEMO.md).
+
 ## Roadmap
 
 ### v0.3 — Loop autônomo por issue (atual)

@@ -1,0 +1,26 @@
+{
+  "name": "@kairos-symphony/daemon",
+  "version": "0.1.0",
+  "type": "module",
+  "bin": { "symphony": "./dist/bin.js" },
+  "scripts": {
+    "build": "tsc -p tsconfig.json && chmod +x dist/bin.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "dev": "tsx src/bin.ts"
+  },
+  "dependencies": {
+    "@kairos-symphony/adapter-github": "workspace:*",
+    "@kairos-symphony/cli-claude-code": "workspace:*",
+    "@kairos-symphony/core": "workspace:*",
+    "@kairos-symphony/factory-kairos-forge": "workspace:*",
+    "citty": "0.1.6",
+    "yaml": "2.6.1",
+    "zod": "3.24.1"
+  },
+  "devDependencies": {
+    "@types/node": "22.10.2",
+    "typescript": "5.7.2",
+    "vitest": "2.1.8"
+  }
+}
