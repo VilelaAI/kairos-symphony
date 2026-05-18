@@ -206,7 +206,7 @@ export class Reconciler {
     for (const dir of onDisk) {
       const matchingRecord = this.deps.store
         .listActiveIssues()
-        .find((r) => r.workspacePath !== null && r.workspacePath.endsWith(dir.issueId));
+        .find((r) => r.workspacePath?.endsWith(dir.issueId));
       if (matchingRecord) continue;
       findings.push({
         scenario: 'orphan_workspace',

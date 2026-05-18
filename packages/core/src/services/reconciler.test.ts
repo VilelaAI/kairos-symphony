@@ -297,3 +297,62 @@ describe('Reconciler — orphan workspaces', () => {
     });
   });
 });
+
+describe('Reconciler — dry-run integrado', () => {
+  it('múltiplos cenários simultâneos em dry-run produzem findings sem efeitos', async () => {
+    const tracker = new FakeTracker();
+    tracker.closed.add('r#1');
+    tracker.merged.add(99);
+    tracker.issuesByState.set('ready', [
+      { id: 'r#2', number: 2, title: 't', body: 'b', labels: [], state: 'ready' },
+    ]);
+    const store = new FakeStore();
+    store.upsertIssue({
+      issueId: 'r#1',
+      trackerType: 'github',
+      state: 'in_progress',
+      agentId: 'lucas',
+      workspacePath: '/x',
+      branchName: 'symphony/r-1',
+      startedAt: '2026-05-18T10:00:00.000Z',
+      finishedAt: null,
+      retryCount: 0,
+      prNumber: null,
+      correlationId: 'cid',
+      lastSyncedAt: '2026-05-18T10:00:00.000Z',
+      blockedReason: null,
+    });
+    store.upsertIssue({
+      issueId: 'r#2',
+      trackerType: 'github',
+      state: 'blocked',
+      agentId: 'lucas',
+      workspacePath: '/y',
+      branchName: 'symphony/r-2',
+      startedAt: null,
+      finishedAt: null,
+      retryCount: 3,
+      prNumber: null,
+      correlationId: 'cid2',
+      lastSyncedAt: '2026-05-18T10:00:00.000Z',
+      blockedReason: 'symphony:max-retries-exceeded',
+    });
+    const terminate = vi.fn();
+    const cleanup = vi.fn();
+    const reconciler = new Reconciler({
+      tracker,
+      store,
+      log: logger,
+      now: () => new Date('2026-05-18T12:00:00Z'),
+      activeSupervisors: () => new Map([['r#1', { terminate } as { terminate: () => void }]]),
+      cleanupWorkspace: cleanup,
+      listWorkspacesOnDisk: () => [],
+    });
+    const findings = await reconciler.run({ dryRun: true });
+    expect(findings.length).toBeGreaterThanOrEqual(2);
+    expect(terminate).not.toHaveBeenCalled();
+    expect(cleanup).not.toHaveBeenCalled();
+    expect(tracker.transitions).toHaveLength(0);
+    expect(store.getIssue('r#2')?.state).toBe('blocked'); // não mudou
+  });
+});
