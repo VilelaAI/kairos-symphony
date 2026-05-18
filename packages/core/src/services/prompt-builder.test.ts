@@ -46,9 +46,9 @@ describe('PromptBuilder', () => {
 
   it('rejeita prompt > maxBytes', () => {
     const huge = 'X'.repeat(2_000_000);
-    expect(() =>
-      builder.build({ issue: { ...issue, body: huge }, agent, workspace }),
-    ).toThrow(PromptTooLargeError);
+    expect(() => builder.build({ issue: { ...issue, body: huge }, agent, workspace })).toThrow(
+      PromptTooLargeError,
+    );
   });
 
   it('inclui labels da issue', () => {
