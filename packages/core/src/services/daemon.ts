@@ -120,6 +120,10 @@ export class Daemon {
     });
   }
 
+  async reconcile(dryRun: boolean): Promise<unknown[]> {
+    return this.deps.reconciler.run({ dryRun });
+  }
+
   async tick(): Promise<void> {
     await this.deps.reconciler.run({ dryRun: false });
     const ready = await this.deps.tracker.fetchIssuesByState('ready');
