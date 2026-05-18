@@ -101,19 +101,38 @@ export class SqliteStateStore implements StateStore {
         .all(state) as Record<string, unknown>[]
     ).map(rowToRecord);
   }
-  recordTransition(_t: Transition): void {
-    throw new Error('not implemented');
+  recordTransition(t: Transition): void {
+    this.db
+      .prepare(
+        `INSERT INTO transitions
+           (issue_id, from_state, to_state, reason, evidence, correlation_id, occurred_at)
+         VALUES (@issueId, @fromState, @toState, @reason, @evidence, @correlationId, @occurredAt)`,
+      )
+      .run(t);
   }
-  recordDispatch(_d: Dispatch): number {
-    throw new Error('not implemented');
+
+  recordDispatch(d: Dispatch): number {
+    const result = this.db
+      .prepare(
+        `INSERT INTO dispatches
+           (issue_id, agent_id, attempt, started_at, ended_at, exit_code, outcome, correlation_id)
+         VALUES (@issueId, @agentId, @attempt, @startedAt, @endedAt, @exitCode, @outcome, @correlationId)`,
+      )
+      .run(d);
+    return Number(result.lastInsertRowid);
   }
+
   updateDispatchOutcome(
-    _dispatchId: number,
-    _outcome: Dispatch['outcome'],
-    _exitCode: number | null,
-    _endedAt: string,
+    dispatchId: number,
+    outcome: Dispatch['outcome'],
+    exitCode: number | null,
+    endedAt: string,
   ): void {
-    throw new Error('not implemented');
+    this.db
+      .prepare(
+        'UPDATE dispatches SET outcome = ?, exit_code = ?, ended_at = ? WHERE id = ?',
+      )
+      .run(outcome, exitCode, endedAt, dispatchId);
   }
 
   close(): void {

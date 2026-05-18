@@ -1,6 +1,7 @@
 import { describe, expect, it, beforeEach, afterEach } from 'vitest';
 import { SqliteStateStore } from './sqlite.js';
 import type { IssueRecord } from '../../domain/issue.js';
+import type { Transition, Dispatch } from '../../domain/transition.js';
 
 describe('SqliteStateStore — migrations', () => {
   let store: SqliteStateStore;
@@ -84,5 +85,63 @@ describe('SqliteStateStore — list queries', () => {
   it('listInState filtra por estado', () => {
     expect(store.listInState('review_pending').map((r) => r.issueId)).toEqual(['r#2']);
     expect(store.listInState('done').map((r) => r.issueId)).toEqual(['r#3']);
+  });
+});
+
+describe('SqliteStateStore — transitions', () => {
+  let store: SqliteStateStore;
+  beforeEach(() => {
+    store = new SqliteStateStore({ path: ':memory:' });
+    store.upsertIssue(sample);
+  });
+  afterEach(() => store.close());
+
+  it('recordTransition é append-only', () => {
+    const t: Transition = {
+      issueId: 'r#1',
+      fromState: 'ready',
+      toState: 'in_progress',
+      reason: 'symphony dispatched',
+      evidence: null,
+      correlationId: 'abc',
+      occurredAt: '2026-05-18T10:00:00.000Z',
+    };
+    store.recordTransition(t);
+    store.recordTransition({ ...t, fromState: 'in_progress', toState: 'review_pending' });
+    const rows = (store as unknown as { db: { prepare: (s: string) => { all: (...a: unknown[]) => unknown[] } } }).db
+      .prepare('SELECT * FROM transitions WHERE issue_id = ?')
+      .all('r#1') as unknown[];
+    expect(rows).toHaveLength(2);
+  });
+});
+
+describe('SqliteStateStore — dispatches', () => {
+  let store: SqliteStateStore;
+  beforeEach(() => {
+    store = new SqliteStateStore({ path: ':memory:' });
+    store.upsertIssue(sample);
+  });
+  afterEach(() => store.close());
+
+  it('recordDispatch insere e updateDispatchOutcome atualiza pelo id mais recente', () => {
+    const d: Dispatch = {
+      issueId: 'r#1',
+      agentId: 'lucas-backend',
+      attempt: 1,
+      startedAt: '2026-05-18T10:00:00.000Z',
+      endedAt: null,
+      exitCode: null,
+      outcome: null,
+      correlationId: 'abc',
+    };
+    const id = store.recordDispatch(d);
+    expect(typeof id).toBe('number');
+    store.updateDispatchOutcome(id, 'pr_opened', 0, '2026-05-18T10:05:00.000Z');
+    const row = (store as unknown as { db: { prepare: (s: string) => { get: (...a: unknown[]) => unknown } } }).db
+      .prepare('SELECT outcome, exit_code, ended_at FROM dispatches WHERE id = ?')
+      .get(id) as { outcome: string; exit_code: number; ended_at: string };
+    expect(row.outcome).toBe('pr_opened');
+    expect(row.exit_code).toBe(0);
+    expect(row.ended_at).toBe('2026-05-18T10:05:00.000Z');
   });
 });
