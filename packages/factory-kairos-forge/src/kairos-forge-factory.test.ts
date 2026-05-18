@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { KairosForgeFactory } from './kairos-forge-factory.js';
+import { KairosForgeFactory, discoverForgeAgentsDir } from './kairos-forge-factory.js';
 
 describe('KairosForgeFactory', () => {
   it('loadAgent lê .md com frontmatter e devolve AgentDescriptor', async () => {
@@ -48,6 +48,26 @@ describe('KairosForgeFactory', () => {
       mkdirSync(join(dir, 'agents'));
       const factory = new KairosForgeFactory({ agentsDir: join(dir, 'agents') });
       await expect(factory.loadAgent('inexistente')).rejects.toThrow(/agente.*não encontrado/i);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('discoverForgeAgentsDir', () => {
+  it('retorna null se nenhum path conhecido existir', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'home-'));
+    try {
+      expect(discoverForgeAgentsDir(dir)).toBeNull();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+  it('retorna o primeiro path conhecido que existir', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'home-'));
+    try {
+      mkdirSync(join(dir, '.claude/plugins/kairos-forge/agents'), { recursive: true });
+      expect(discoverForgeAgentsDir(dir)).toContain('.claude/plugins/kairos-forge/agents');
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
