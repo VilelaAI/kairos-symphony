@@ -81,9 +81,9 @@ export class SqliteStateStore implements StateStore {
   }
 
   getIssue(issueId: IssueId): IssueRecord | null {
-    const row = this.db
-      .prepare('SELECT * FROM issues WHERE issue_id = ?')
-      .get(issueId) as Record<string, unknown> | undefined;
+    const row = this.db.prepare('SELECT * FROM issues WHERE issue_id = ?').get(issueId) as
+      | Record<string, unknown>
+      | undefined;
     return row ? rowToRecord(row) : null;
   }
   listActiveIssues(): IssueRecord[] {
@@ -129,9 +129,7 @@ export class SqliteStateStore implements StateStore {
     endedAt: string,
   ): void {
     this.db
-      .prepare(
-        'UPDATE dispatches SET outcome = ?, exit_code = ?, ended_at = ? WHERE id = ?',
-      )
+      .prepare('UPDATE dispatches SET outcome = ?, exit_code = ?, ended_at = ? WHERE id = ?')
       .run(outcome, exitCode, endedAt, dispatchId);
   }
 

@@ -1,6 +1,6 @@
+import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
 import { dirname, resolve, sep } from 'node:path';
-import { spawnSync } from 'node:child_process';
 import type { IssueId } from '../domain/issue.js';
 import type { WorkspaceInfo } from '../domain/workspace.js';
 

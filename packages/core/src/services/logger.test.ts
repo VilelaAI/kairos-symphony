@@ -4,7 +4,11 @@ import { Logger } from './logger.js';
 describe('Logger', () => {
   it('emite linha JSON com campos canônicos', () => {
     const sink = vi.fn();
-    const log = new Logger({ level: 'info', write: sink, now: () => new Date('2026-05-18T10:00:00Z') });
+    const log = new Logger({
+      level: 'info',
+      write: sink,
+      now: () => new Date('2026-05-18T10:00:00Z'),
+    });
     log.info({ event: 'issue_dispatched', issue_id: 'r#1', message: 'oi' });
     expect(sink).toHaveBeenCalledOnce();
     const line = sink.mock.calls[0]?.[0] as string;
@@ -20,7 +24,11 @@ describe('Logger', () => {
 
   it('faz redaction de campos sensíveis', () => {
     const sink = vi.fn();
-    const log = new Logger({ level: 'info', write: sink, now: () => new Date('2026-05-18T10:00:00Z') });
+    const log = new Logger({
+      level: 'info',
+      write: sink,
+      now: () => new Date('2026-05-18T10:00:00Z'),
+    });
     log.info({
       event: 'tracker_polled',
       token: 'gho_secret123',

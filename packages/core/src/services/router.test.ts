@@ -17,9 +17,7 @@ describe('Router', () => {
       defaultAgent: 'laura-tech-lead',
       rules: [{ label: 'bug', agent: 'lucas-backend' }],
     });
-    expect(
-      router.route({ ...baseIssue, labels: ['bug', 'agent:carlos-dba'] }),
-    ).toBe('carlos-dba');
+    expect(router.route({ ...baseIssue, labels: ['bug', 'agent:carlos-dba'] })).toBe('carlos-dba');
   });
 
   it('routing.rules por label de tipo se não houver agent:<id>', () => {

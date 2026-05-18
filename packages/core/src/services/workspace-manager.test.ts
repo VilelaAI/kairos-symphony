@@ -1,8 +1,8 @@
-import { describe, expect, it } from 'vitest';
 import { execSync } from 'node:child_process';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { describe, expect, it } from 'vitest';
 import { PathTraversalError, WorkspaceManager } from './workspace-manager.js';
 
 const makeRoot = () => mkdtempSync(join(tmpdir(), 'symphony-ws-'));
@@ -34,7 +34,10 @@ describe('WorkspaceManager — path guard', () => {
 function setupRepoFixture(): { repoPath: string; root: string } {
   const repoPath = makeRoot();
   execSync('git init -b main', { cwd: repoPath });
-  execSync('git config user.email "t@t" && git config user.name "t"', { cwd: repoPath, shell: '/bin/bash' });
+  execSync('git config user.email "t@t" && git config user.name "t"', {
+    cwd: repoPath,
+    shell: '/bin/bash',
+  });
   execSync('git commit --allow-empty -m "init"', { cwd: repoPath });
   const root = makeRoot();
   return { repoPath, root };

@@ -1,7 +1,7 @@
-import { describe, expect, it, beforeEach, afterEach } from 'vitest';
-import { SqliteStateStore } from './sqlite.js';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { IssueRecord } from '../../domain/issue.js';
-import type { Transition, Dispatch } from '../../domain/transition.js';
+import type { Dispatch, Transition } from '../../domain/transition.js';
+import { SqliteStateStore } from './sqlite.js';
 
 describe('SqliteStateStore — migrations', () => {
   let store: SqliteStateStore;
@@ -78,7 +78,10 @@ describe('SqliteStateStore — list queries', () => {
   afterEach(() => store.close());
 
   it('listActiveIssues exclui done', () => {
-    const ids = store.listActiveIssues().map((r) => r.issueId).sort();
+    const ids = store
+      .listActiveIssues()
+      .map((r) => r.issueId)
+      .sort();
     expect(ids).toEqual(['r#1', 'r#2', 'r#4']);
   });
 
@@ -108,7 +111,11 @@ describe('SqliteStateStore — transitions', () => {
     };
     store.recordTransition(t);
     store.recordTransition({ ...t, fromState: 'in_progress', toState: 'review_pending' });
-    const rows = (store as unknown as { db: { prepare: (s: string) => { all: (...a: unknown[]) => unknown[] } } }).db
+    const rows = (
+      store as unknown as {
+        db: { prepare: (s: string) => { all: (...a: unknown[]) => unknown[] } };
+      }
+    ).db
       .prepare('SELECT * FROM transitions WHERE issue_id = ?')
       .all('r#1') as unknown[];
     expect(rows).toHaveLength(2);
@@ -137,7 +144,9 @@ describe('SqliteStateStore — dispatches', () => {
     const id = store.recordDispatch(d);
     expect(typeof id).toBe('number');
     store.updateDispatchOutcome(id, 'pr_opened', 0, '2026-05-18T10:05:00.000Z');
-    const row = (store as unknown as { db: { prepare: (s: string) => { get: (...a: unknown[]) => unknown } } }).db
+    const row = (
+      store as unknown as { db: { prepare: (s: string) => { get: (...a: unknown[]) => unknown } } }
+    ).db
       .prepare('SELECT outcome, exit_code, ended_at FROM dispatches WHERE id = ?')
       .get(id) as { outcome: string; exit_code: number; ended_at: string };
     expect(row.outcome).toBe('pr_opened');

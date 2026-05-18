@@ -53,8 +53,16 @@ export class Logger {
     this.write(line);
   }
 
-  debug(f: LogFields): void { this.emit('debug', f); }
-  info(f: LogFields): void { this.emit('info', f); }
-  warn(f: LogFields): void { this.emit('warn', f); }
-  error(f: LogFields): void { this.emit('error', f); }
+  debug(f: LogFields): void {
+    this.emit('debug', f);
+  }
+  info(f: LogFields): void {
+    this.emit('info', f);
+  }
+  warn(f: LogFields): void {
+    this.emit('warn', f);
+  }
+  error(f: LogFields): void {
+    this.emit('error', f);
+  }
 }
