@@ -65,7 +65,9 @@ async function withRateLimit<T>(fn: () => Promise<T>): Promise<T> {
 export class GithubTracker implements TrackerPort {
   private readonly oc: Octokit;
   constructor(private readonly opts: GithubTrackerOpts) {
-    this.oc = new Octokit({ auth: opts.token, request: opts.request });
+    this.oc = new Octokit(
+      opts.request ? { auth: opts.token, request: opts.request } : { auth: opts.token },
+    );
   }
 
   async fetchIssuesByState(state: IssueState): Promise<Issue[]> {
