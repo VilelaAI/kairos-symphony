@@ -87,10 +87,19 @@ export class SqliteStateStore implements StateStore {
     return row ? rowToRecord(row) : null;
   }
   listActiveIssues(): IssueRecord[] {
-    throw new Error('not implemented');
+    return (
+      this.db
+        .prepare("SELECT * FROM issues WHERE state != 'done' ORDER BY started_at")
+        .all() as Record<string, unknown>[]
+    ).map(rowToRecord);
   }
-  listInState(_state: IssueState): IssueRecord[] {
-    throw new Error('not implemented');
+
+  listInState(state: IssueState): IssueRecord[] {
+    return (
+      this.db
+        .prepare('SELECT * FROM issues WHERE state = ? ORDER BY started_at')
+        .all(state) as Record<string, unknown>[]
+    ).map(rowToRecord);
   }
   recordTransition(_t: Transition): void {
     throw new Error('not implemented');

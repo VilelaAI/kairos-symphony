@@ -64,3 +64,25 @@ describe('SqliteStateStore — issues', () => {
     expect(store.getIssue('r#nope')).toBeNull();
   });
 });
+
+describe('SqliteStateStore — list queries', () => {
+  let store: SqliteStateStore;
+  beforeEach(() => {
+    store = new SqliteStateStore({ path: ':memory:' });
+    store.upsertIssue({ ...sample, issueId: 'r#1', state: 'in_progress' });
+    store.upsertIssue({ ...sample, issueId: 'r#2', state: 'review_pending' });
+    store.upsertIssue({ ...sample, issueId: 'r#3', state: 'done' });
+    store.upsertIssue({ ...sample, issueId: 'r#4', state: 'blocked' });
+  });
+  afterEach(() => store.close());
+
+  it('listActiveIssues exclui done', () => {
+    const ids = store.listActiveIssues().map((r) => r.issueId).sort();
+    expect(ids).toEqual(['r#1', 'r#2', 'r#4']);
+  });
+
+  it('listInState filtra por estado', () => {
+    expect(store.listInState('review_pending').map((r) => r.issueId)).toEqual(['r#2']);
+    expect(store.listInState('done').map((r) => r.issueId)).toEqual(['r#3']);
+  });
+});
