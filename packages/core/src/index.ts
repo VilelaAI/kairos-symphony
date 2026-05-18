@@ -16,3 +16,4 @@ export * from './services/router.js';
 export * from './services/system-clock.js';
 export * from './services/store/sqlite.js';
 export * from './services/workspace-manager.js';
+export * from './services/agent-supervisor.js';

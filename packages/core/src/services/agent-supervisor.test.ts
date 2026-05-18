@@ -424,3 +424,44 @@ describe('AgentSupervisor — retry/backoff', () => {
     expect(sup.state).toBe('running');
   });
 });
+
+describe('AgentSupervisor — max retries', () => {
+  it('após exceder maxRetries marca blocked e chama tracker.transitionState', async () => {
+    const f = makeFixtures();
+    const cli = new FakeCli();
+    const clock = new FakeClock();
+    const tracker = new FakeTracker();
+    const sup = new AgentSupervisor({
+      issue: f.issue,
+      agent: f.agent,
+      workspace: f.workspace,
+      prompt: 'p',
+      correlationId: 'cid',
+      cli,
+      tracker,
+      store: new FakeStore(),
+      clock,
+      log: new Logger({ level: 'error', write: () => undefined, now: () => new Date() }),
+      cfg: {
+        permissionMode: 'bypass',
+        binaryPath: '/x',
+        stallTimeoutMs: 600_000,
+        maxRetries: 3,
+        backoffMs: [60_000, 240_000, 960_000],
+      },
+    });
+    sup.start();
+    // Loop: crash → retry 3 vezes; 4ª falha bloqueia
+    for (let i = 0; i < 4; i++) {
+      cli.last().finish(1);
+      await new Promise((r) => setImmediate(r));
+      if (i < 3) clock.advance(20 * 60_000); // garante dispara backoff
+    }
+    expect(sup.state).toBe('blocked');
+    expect(tracker.transitions).toContainEqual({
+      issueId: 'r#1',
+      to: 'blocked',
+      reason: 'symphony:max-retries-exceeded',
+    });
+  });
+});
