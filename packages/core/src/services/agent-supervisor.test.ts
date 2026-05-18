@@ -211,3 +211,71 @@ describe('AgentSupervisor — start', () => {
     expect(readFileSync(f.workspace.terminalLogPath, 'utf8')).toBe('hello\nworld\n');
   });
 });
+
+describe('AgentSupervisor — stall', () => {
+  it('detecta stall quando não há output por > stallTimeoutMs', async () => {
+    const f = makeFixtures();
+    const cli = new FakeCli();
+    const clock = new FakeClock();
+    const tracker = new FakeTracker();
+    const sup = new AgentSupervisor({
+      issue: f.issue,
+      agent: f.agent,
+      workspace: f.workspace,
+      prompt: 'p',
+      correlationId: 'cid',
+      cli,
+      tracker,
+      store: new FakeStore(),
+      clock,
+      log: new Logger({ level: 'error', write: () => undefined, now: () => new Date() }),
+      cfg: {
+        permissionMode: 'bypass',
+        binaryPath: '/x',
+        stallTimeoutMs: 600_000,
+        maxRetries: 3,
+        backoffMs: [60_000, 240_000, 960_000],
+      },
+    });
+    sup.start();
+    const killSpy = vi.spyOn(cli.last(), 'kill');
+    // Avança 11min sem output
+    clock.advance(11 * 60_000);
+    await sup.tick();
+    expect(killSpy).toHaveBeenCalledWith('SIGTERM');
+    expect(sup.state).toBe('terminating');
+  });
+
+  it('não detecta stall se houve output recente', async () => {
+    const f = makeFixtures();
+    const cli = new FakeCli();
+    const clock = new FakeClock();
+    const sup = new AgentSupervisor({
+      issue: f.issue,
+      agent: f.agent,
+      workspace: f.workspace,
+      prompt: 'p',
+      correlationId: 'cid',
+      cli,
+      tracker: new FakeTracker(),
+      store: new FakeStore(),
+      clock,
+      log: new Logger({ level: 'error', write: () => undefined, now: () => new Date() }),
+      cfg: {
+        permissionMode: 'bypass',
+        binaryPath: '/x',
+        stallTimeoutMs: 600_000,
+        maxRetries: 3,
+        backoffMs: [60_000, 240_000, 960_000],
+      },
+    });
+    sup.start();
+    clock.advance(5 * 60_000);
+    cli.last().emit('progress');
+    clock.advance(5 * 60_000);
+    const killSpy = vi.spyOn(cli.last(), 'kill');
+    await sup.tick();
+    expect(killSpy).not.toHaveBeenCalled();
+    expect(sup.state).toBe('running');
+  });
+});

@@ -95,10 +95,51 @@ export class AgentSupervisor {
     });
   }
 
-  // próximas tasks: tick, onProcessExit, onStall, onPRDetected, scheduleRetry
   async tick(): Promise<void> {
-    // placeholder
+    if (this.state !== 'running') return;
+    const ageMs = this.deps.clock.now().getTime() - this.lastOutputAt;
+    if (ageMs > this.deps.cfg.stallTimeoutMs) {
+      this.onStall();
+      return;
+    }
+    const pr = await this.deps.tracker.detectLinkedPR(this.deps.issue.id);
+    if (pr) {
+      await this.onPRDetected(pr);
+    }
   }
+
+  private onStall(): void {
+    this.deps.log.warn({
+      event: 'agent_stalled',
+      issue_id: this.deps.issue.id,
+      agent_id: this.deps.agent.id,
+      correlation_id: this.deps.correlationId,
+      message: `Agente ${this.deps.agent.id} stall detectado para issue ${this.deps.issue.id}`,
+    });
+    this.state = 'terminating';
+    this.proc?.kill('SIGTERM');
+    this.markDispatchOutcome('stalled', null);
+    this.scheduleRetry();
+  }
+
+  private async onPRDetected(_pr: unknown): Promise<void> {
+    // placeholder — próxima task
+  }
+
+  private scheduleRetry(): void {
+    // placeholder — próxima task
+  }
+
+  private markDispatchOutcome(outcome: 'stalled' | 'crashed' | 'exited_no_pr' | 'pr_opened', exitCode: number | null): void {
+    if (this.dispatchId === null) return;
+    this.deps.store.updateDispatchOutcome(
+      this.dispatchId,
+      outcome,
+      exitCode,
+      this.deps.clock.now().toISOString(),
+    );
+  }
+
   private async onProcessExit(_code: number): Promise<void> {
     // placeholder
   }
