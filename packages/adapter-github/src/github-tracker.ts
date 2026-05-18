@@ -142,10 +142,22 @@ export class GithubTracker implements TrackerPort {
       merged: false,
     };
   }
-  async isIssueClosed(_issueId: IssueId): Promise<boolean> {
-    throw new Error('not implemented');
+  async isIssueClosed(id: IssueId): Promise<boolean> {
+    const num = Number.parseInt(id.split('#')[1] ?? '0', 10);
+    const { data } = await this.oc.issues.get({
+      owner: this.opts.owner,
+      repo: this.opts.repo,
+      issue_number: num,
+    });
+    return data.state === 'closed';
   }
-  async isPRMerged(_prNumber: number): Promise<boolean> {
-    throw new Error('not implemented');
+
+  async isPRMerged(prNumber: number): Promise<boolean> {
+    const { data } = await this.oc.pulls.get({
+      owner: this.opts.owner,
+      repo: this.opts.repo,
+      pull_number: prNumber,
+    });
+    return data.merged === true;
   }
 }

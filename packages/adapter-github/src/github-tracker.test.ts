@@ -144,3 +144,27 @@ describe('GithubTracker.detectLinkedPR', () => {
     expect(await tracker.detectLinkedPR('VilelaAI/test#42')).toBeNull();
   });
 });
+
+describe('GithubTracker.isIssueClosed', () => {
+  it('retorna true quando issue está closed', async () => {
+    server.use(
+      http.get('https://api.github.com/repos/VilelaAI/test/issues/42', () =>
+        HttpResponse.json({ number: 42, state: 'closed' }),
+      ),
+    );
+    const tracker = new GithubTracker({ owner: 'VilelaAI', repo: 'test', token: 'x' });
+    expect(await tracker.isIssueClosed('VilelaAI/test#42')).toBe(true);
+  });
+});
+
+describe('GithubTracker.isPRMerged', () => {
+  it('retorna true quando PR está merged', async () => {
+    server.use(
+      http.get('https://api.github.com/repos/VilelaAI/test/pulls/99', () =>
+        HttpResponse.json({ number: 99, merged: true }),
+      ),
+    );
+    const tracker = new GithubTracker({ owner: 'VilelaAI', repo: 'test', token: 'x' });
+    expect(await tracker.isPRMerged(99)).toBe(true);
+  });
+});
