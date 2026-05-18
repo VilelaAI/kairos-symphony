@@ -10,3 +10,4 @@ export * from './ports/cli.js';
 export * from './ports/factory.js';
 export * from './ports/store.js';
 export * from './ports/clock.js';
+export * from './services/logger.js';
