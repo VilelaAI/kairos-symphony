@@ -38,6 +38,30 @@ function inferState(labels: string[], isClosed: boolean): IssueState {
   return 'triage';
 }
 
+export class RateLimitedError extends Error {
+  constructor(public readonly resetAtSeconds: number) {
+    super(`GitHub API rate limited, reset at ${new Date(resetAtSeconds * 1000).toISOString()}`);
+    this.name = 'RateLimitedError';
+  }
+}
+
+async function withRateLimit<T>(fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (err) {
+    const e = err as {
+      status?: number;
+      response?: { headers?: Record<string, string | undefined> };
+    };
+    const headers = e.response?.headers;
+    if (e.status === 403 && headers && headers['x-ratelimit-remaining'] === '0') {
+      const reset = Number.parseInt(headers['x-ratelimit-reset'] ?? '0', 10);
+      throw new RateLimitedError(reset);
+    }
+    throw err;
+  }
+}
+
 export class GithubTracker implements TrackerPort {
   private readonly oc: Octokit;
   constructor(private readonly opts: GithubTrackerOpts) {
@@ -46,12 +70,14 @@ export class GithubTracker implements TrackerPort {
 
   async fetchIssuesByState(state: IssueState): Promise<Issue[]> {
     if (state === 'done') {
-      const { data } = await this.oc.issues.listForRepo({
-        owner: this.opts.owner,
-        repo: this.opts.repo,
-        state: 'closed',
-        per_page: 100,
-      });
+      const { data } = await withRateLimit(() =>
+        this.oc.issues.listForRepo({
+          owner: this.opts.owner,
+          repo: this.opts.repo,
+          state: 'closed',
+          per_page: 100,
+        }),
+      );
       return data
         .filter((r) => !('pull_request' in r) || r.pull_request === undefined)
         .map((r) => ({
@@ -65,13 +91,15 @@ export class GithubTracker implements TrackerPort {
     }
     const label = STATE_TO_LABEL[state];
     if (!label) return [];
-    const { data } = await this.oc.issues.listForRepo({
-      owner: this.opts.owner,
-      repo: this.opts.repo,
-      labels: label,
-      state: 'open',
-      per_page: 100,
-    });
+    const { data } = await withRateLimit(() =>
+      this.oc.issues.listForRepo({
+        owner: this.opts.owner,
+        repo: this.opts.repo,
+        labels: label,
+        state: 'open',
+        per_page: 100,
+      }),
+    );
     return data
       .filter((r) => !('pull_request' in r) || r.pull_request === undefined)
       .map((r) => {
@@ -90,38 +118,45 @@ export class GithubTracker implements TrackerPort {
   async transitionState(id: IssueId, to: IssueState, _reason: string): Promise<void> {
     const num = Number.parseInt(id.split('#')[1] ?? '0', 10);
     if (to === 'done') {
-      await this.oc.issues.update({
-        owner: this.opts.owner,
-        repo: this.opts.repo,
-        issue_number: num,
-        state: 'closed',
-      });
+      await withRateLimit(() =>
+        this.oc.issues.update({
+          owner: this.opts.owner,
+          repo: this.opts.repo,
+          issue_number: num,
+          state: 'closed',
+        }),
+      );
       return;
     }
     const addLabel = STATE_TO_LABEL[to];
     if (addLabel) {
-      await this.oc.issues.addLabels({
-        owner: this.opts.owner,
-        repo: this.opts.repo,
-        issue_number: num,
-        labels: [addLabel],
-      });
+      await withRateLimit(() =>
+        this.oc.issues.addLabels({
+          owner: this.opts.owner,
+          repo: this.opts.repo,
+          issue_number: num,
+          labels: [addLabel],
+        }),
+      );
     }
     for (const other of Object.values(STATE_TO_LABEL)) {
       if (other && other !== addLabel) {
         try {
-          await this.oc.issues.removeLabel({
-            owner: this.opts.owner,
-            repo: this.opts.repo,
-            issue_number: num,
-            name: other,
-          });
+          await withRateLimit(() =>
+            this.oc.issues.removeLabel({
+              owner: this.opts.owner,
+              repo: this.opts.repo,
+              issue_number: num,
+              name: other,
+            }),
+          );
         } catch (err: unknown) {
           if ((err as { status?: number }).status !== 404) throw err;
         }
       }
     }
   }
+
   async detectLinkedPR(id: IssueId): Promise<PullRequestRef | null> {
     const num = Number.parseInt(id.split('#')[1] ?? '0', 10);
     const safeBranch = `symphony/${this.opts.owner}-${this.opts.repo}-${num}`;
@@ -131,7 +166,7 @@ export class GithubTracker implements TrackerPort {
       'is:open',
       `(head:${safeBranch} OR "Closes #${num}" OR "closes #${num}")`,
     ].join(' ');
-    const { data } = await this.oc.search.issuesAndPullRequests({ q });
+    const { data } = await withRateLimit(() => this.oc.search.issuesAndPullRequests({ q }));
     const found = data.items[0];
     if (!found) return null;
     return {
@@ -142,22 +177,27 @@ export class GithubTracker implements TrackerPort {
       merged: false,
     };
   }
+
   async isIssueClosed(id: IssueId): Promise<boolean> {
     const num = Number.parseInt(id.split('#')[1] ?? '0', 10);
-    const { data } = await this.oc.issues.get({
-      owner: this.opts.owner,
-      repo: this.opts.repo,
-      issue_number: num,
-    });
+    const { data } = await withRateLimit(() =>
+      this.oc.issues.get({
+        owner: this.opts.owner,
+        repo: this.opts.repo,
+        issue_number: num,
+      }),
+    );
     return data.state === 'closed';
   }
 
   async isPRMerged(prNumber: number): Promise<boolean> {
-    const { data } = await this.oc.pulls.get({
-      owner: this.opts.owner,
-      repo: this.opts.repo,
-      pull_number: prNumber,
-    });
+    const { data } = await withRateLimit(() =>
+      this.oc.pulls.get({
+        owner: this.opts.owner,
+        repo: this.opts.repo,
+        pull_number: prNumber,
+      }),
+    );
     return data.merged === true;
   }
 }

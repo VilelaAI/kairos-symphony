@@ -168,3 +168,26 @@ describe('GithubTracker.isPRMerged', () => {
     expect(await tracker.isPRMerged(99)).toBe(true);
   });
 });
+
+describe('GithubTracker — rate limit', () => {
+  it('lança RateLimitedError com reset timestamp em 403 com x-ratelimit-remaining: 0', async () => {
+    server.use(
+      http.get(
+        'https://api.github.com/repos/VilelaAI/test/issues',
+        () =>
+          new HttpResponse('rate limit', {
+            status: 403,
+            headers: {
+              'x-ratelimit-remaining': '0',
+              'x-ratelimit-reset': '1700000000',
+            },
+          }),
+      ),
+    );
+    const tracker = new GithubTracker({ owner: 'VilelaAI', repo: 'test', token: 'x' });
+    await expect(tracker.fetchIssuesByState('ready')).rejects.toMatchObject({
+      name: 'RateLimitedError',
+      resetAtSeconds: 1700000000,
+    });
+  });
+});
