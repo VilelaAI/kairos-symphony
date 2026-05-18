@@ -439,6 +439,23 @@ describe('AgentSupervisor — max retries', () => {
     const cli = new FakeCli();
     const clock = new FakeClock();
     const tracker = new FakeTracker();
+    const store = new FakeStore();
+    // simula que o Daemon já criou o IssueRecord em in_progress antes de spawnar
+    store.upsertIssue({
+      issueId: 'r#1',
+      trackerType: 'github',
+      state: 'in_progress',
+      agentId: 'lucas',
+      workspacePath: f.workspace.path,
+      branchName: f.workspace.branchName,
+      startedAt: clock.now().toISOString(),
+      finishedAt: null,
+      retryCount: 0,
+      prNumber: null,
+      correlationId: 'cid',
+      lastSyncedAt: clock.now().toISOString(),
+      blockedReason: null,
+    });
     const sup = new AgentSupervisor({
       issue: f.issue,
       agent: f.agent,
@@ -447,7 +464,7 @@ describe('AgentSupervisor — max retries', () => {
       correlationId: 'cid',
       cli,
       tracker,
-      store: new FakeStore(),
+      store,
       clock,
       log: new Logger({ level: 'error', write: () => undefined, now: () => new Date() }),
       cfg: {
@@ -471,5 +488,18 @@ describe('AgentSupervisor — max retries', () => {
       to: 'blocked',
       reason: 'symphony:max-retries-exceeded',
     });
+    // valida que o store também persiste blocked
+    expect(store.getIssue('r#1')).toMatchObject({
+      state: 'blocked',
+      blockedReason: 'symphony:max-retries-exceeded',
+    });
+    // valida que a transição foi registrada no histórico
+    expect(store.transitions).toContainEqual(
+      expect.objectContaining({
+        issueId: 'r#1',
+        toState: 'blocked',
+        reason: 'symphony:max-retries-exceeded',
+      }),
+    );
   });
 });
