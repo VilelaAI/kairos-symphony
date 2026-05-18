@@ -50,12 +50,54 @@ export class WorkspaceManager {
     return candidate;
   }
 
-  create(_issueId: IssueId): WorkspaceInfo {
-    throw new Error('not implemented');
+  create(issueId: IssueId): WorkspaceInfo {
+    const path = this.resolvePath(issueId);
+    const safeName = safeIssueDirName(issueId);
+    const branchName = (this.opts.branchPattern ?? 'symphony/{issue_id}').replace(
+      '{issue_id}',
+      safeName,
+    );
+    mkdirSync(dirname(path), { recursive: true });
+    const result = spawnSync(
+      'git',
+      ['worktree', 'add', '-b', branchName, path, this.opts.baseBranch],
+      { cwd: this.opts.repoPath, encoding: 'utf8' },
+    );
+    if (result.status !== 0) {
+      throw new WorktreeCreateFailed(result.stderr ?? 'unknown');
+    }
+    const symphonyDir = resolve(path, '.symphony');
+    mkdirSync(symphonyDir, { recursive: true });
+    return {
+      issueId,
+      path,
+      branchName,
+      baseBranch: this.opts.baseBranch,
+      terminalLogPath: resolve(symphonyDir, 'terminal.log'),
+    };
   }
-  cleanup(_issueId: IssueId): void {
-    throw new Error('not implemented');
+
+  cleanup(issueId: IssueId): void {
+    const path = this.resolvePath(issueId);
+    if (!existsSync(path)) return;
+    spawnSync('git', ['worktree', 'remove', '--force', path], {
+      cwd: this.opts.repoPath,
+      encoding: 'utf8',
+    });
+    if (existsSync(path)) {
+      rmSync(path, { recursive: true, force: true });
+    }
+    const safeName = safeIssueDirName(issueId);
+    const branchName = (this.opts.branchPattern ?? 'symphony/{issue_id}').replace(
+      '{issue_id}',
+      safeName,
+    );
+    spawnSync('git', ['branch', '-D', branchName], {
+      cwd: this.opts.repoPath,
+      encoding: 'utf8',
+    });
   }
+
   listAllOnDisk(): Array<{ issueId: string; path: string }> {
     throw new Error('not implemented');
   }
