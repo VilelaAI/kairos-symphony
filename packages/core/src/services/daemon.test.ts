@@ -268,3 +268,62 @@ describe('Daemon.tick', () => {
     }
   });
 });
+
+describe('Daemon — graceful shutdown', () => {
+  it('stop() chama terminate() em todos os supervisors ativos', async () => {
+    const { repoPath, root } = setupRepo();
+    try {
+      const cli = new FakeCli();
+      const tracker = new FakeTracker();
+      tracker.ready = [{ id: 'r#1', number: 1, title: 't', body: 'b', labels: [], state: 'ready' }];
+      const store = new SqliteStateStore({ path: ':memory:' });
+      const log = new Logger({ level: 'error', write: () => undefined, now: () => new Date() });
+      const wm = new WorkspaceManager({ root, baseBranch: 'main', repoPath });
+      const router = new Router({ defaultAgent: 'default-agent', rules: [] });
+      const pb = new PromptBuilder({ maxBytes: 1_048_576 });
+      const factory = new FakeFactory();
+      // biome-ignore lint/style/useConst: forward reference for reconciler closure
+      let daemon: Daemon;
+      const reconciler = new Reconciler({
+        tracker,
+        store,
+        log,
+        now: () => new Date(),
+        activeSupervisors: () => daemon.activeSupervisors() as never,
+        cleanupWorkspace: (id) => wm.cleanup(id),
+        listWorkspacesOnDisk: () => wm.listAllOnDisk(),
+      });
+      daemon = new Daemon({
+        tracker,
+        cli,
+        factory,
+        store,
+        log,
+        clock: new FakeClock(),
+        workspaceManager: wm,
+        router,
+        promptBuilder: pb,
+        reconciler,
+        pollIntervalMs: 30_000,
+        cfg: {
+          concurrentLimit: 5,
+          stallTimeoutMs: 600_000,
+          maxRetries: 3,
+          backoffMs: [60_000],
+          permissionMode: 'bypass',
+          binaryPath: '/usr/bin/true',
+        },
+      });
+      await daemon.tick();
+      expect(daemon.activeSupervisors().size).toBe(1);
+      await daemon.stop();
+      const sup = daemon.activeSupervisors().get('r#1');
+      expect(sup).toBeDefined();
+      expect((sup as unknown as { state: string }).state).toBe('terminating');
+      store.close();
+    } finally {
+      rmSync(repoPath, { recursive: true, force: true });
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
