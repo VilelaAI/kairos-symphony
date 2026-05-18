@@ -223,3 +223,54 @@ describe('Reconciler — PR mergeado externamente', () => {
     });
   });
 });
+
+describe('Reconciler — issue editada durante execução', () => {
+  it('issue ativa cuja descrição mudou no tracker → log apenas, sem ação', async () => {
+    const tracker = new FakeTracker();
+    tracker.issuesByState.set('in_progress', [
+      {
+        id: 'r#1',
+        number: 1,
+        title: 'novo título',
+        body: 'novo body',
+        labels: ['mudou'],
+        state: 'in_progress',
+      },
+    ]);
+    const store = new FakeStore();
+    store.upsertIssue({
+      issueId: 'r#1',
+      trackerType: 'github',
+      state: 'in_progress',
+      agentId: 'lucas',
+      workspacePath: '/x',
+      branchName: 'symphony/r-1',
+      startedAt: '2026-05-18T10:00:00.000Z',
+      finishedAt: null,
+      retryCount: 0,
+      prNumber: null,
+      correlationId: 'cid',
+      lastSyncedAt: '2026-05-18T09:00:00.000Z',
+      blockedReason: null,
+    });
+    const terminate = vi.fn();
+    const reconciler = new Reconciler({
+      tracker,
+      store,
+      log: logger,
+      now: () => new Date('2026-05-18T12:00:00Z'),
+      activeSupervisors: () => new Map([['r#1', { terminate } as { terminate: () => void }]]),
+      cleanupWorkspace: () => undefined,
+      listWorkspacesOnDisk: () => [],
+    });
+    const findings = await reconciler.run({ dryRun: false });
+    expect(terminate).not.toHaveBeenCalled();
+    expect(findings).toContainEqual<ReconciliationFinding>({
+      scenario: 'issue_edited_during_execution',
+      issueId: 'r#1',
+      action: 'log_only',
+    });
+    // lastSyncedAt atualizado
+    expect(store.getIssue('r#1')?.lastSyncedAt).toBe('2026-05-18T12:00:00.000Z');
+  });
+});

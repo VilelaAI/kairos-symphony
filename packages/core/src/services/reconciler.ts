@@ -40,6 +40,7 @@ export class Reconciler {
     await this.scenarioIssueClosed(findings, dryRun);
     await this.scenarioLabelBlockedRemoved(findings, dryRun);
     await this.scenarioPrMergedExternally(findings, dryRun);
+    await this.scenarioIssueEdited(findings, dryRun);
     return findings;
   }
 
@@ -148,6 +149,43 @@ export class Reconciler {
           ...record,
           state: 'done',
           finishedAt: this.deps.now().toISOString(),
+          lastSyncedAt: this.deps.now().toISOString(),
+        });
+      }
+    }
+  }
+
+  /**
+   * Cenário 5: issue ativa (com supervisor rodando) cuja descrição/labels
+   * mudou no tracker. Passivo: NÃO interrompe o agente; apenas registra
+   * o evento e atualiza `lastSyncedAt` para snapshot do novo estado.
+   */
+  private async scenarioIssueEdited(
+    findings: ReconciliationFinding[],
+    dryRun: boolean,
+  ): Promise<void> {
+    const supervisors = this.deps.activeSupervisors();
+    if (supervisors.size === 0) return;
+    const inProgress = await this.deps.tracker.fetchIssuesByState('in_progress');
+    for (const issue of inProgress) {
+      if (!supervisors.has(issue.id)) continue;
+      const record = this.deps.store.getIssue(issue.id);
+      if (!record) continue;
+      findings.push({
+        scenario: 'issue_edited_during_execution',
+        issueId: issue.id,
+        action: 'log_only',
+      });
+      this.deps.log.info({
+        event: 'state_reconciled',
+        issue_id: issue.id,
+        scenario: 'issue_edited_during_execution',
+        dry_run: dryRun,
+        message: `Issue ${issue.id} sincronizada (sem interromper agente em andamento)`,
+      });
+      if (!dryRun) {
+        this.deps.store.upsertIssue({
+          ...record,
           lastSyncedAt: this.deps.now().toISOString(),
         });
       }
