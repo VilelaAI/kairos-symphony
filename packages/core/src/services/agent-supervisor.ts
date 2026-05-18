@@ -137,7 +137,8 @@ export class AgentSupervisor {
   }
 
   private scheduleRetry(): void {
-    // placeholder — próxima task
+    // placeholder — Task 23 implementa backoff completo
+    this.state = 'retrying';
   }
 
   private markDispatchOutcome(outcome: 'stalled' | 'crashed' | 'exited_no_pr' | 'pr_opened', exitCode: number | null): void {
@@ -150,7 +151,37 @@ export class AgentSupervisor {
     );
   }
 
-  private async onProcessExit(_code: number): Promise<void> {
-    // placeholder
+  private async onProcessExit(code: number): Promise<void> {
+    if (this.state === 'terminating') {
+      // já tratado (stall→kill ou cleanup externo)
+      return;
+    }
+    if (code !== 0) {
+      this.deps.log.error({
+        event: 'agent_crashed',
+        issue_id: this.deps.issue.id,
+        agent_id: this.deps.agent.id,
+        exit_code: code,
+        correlation_id: this.deps.correlationId,
+        message: `Agente ${this.deps.agent.id} crashou (exit ${code})`,
+      });
+      this.markDispatchOutcome('crashed', code);
+      this.scheduleRetry();
+      return;
+    }
+    const pr = await this.deps.tracker.detectLinkedPR(this.deps.issue.id);
+    if (pr) {
+      await this.onPRDetected(pr);
+      return;
+    }
+    this.deps.log.warn({
+      event: 'agent_exited_without_pr',
+      issue_id: this.deps.issue.id,
+      agent_id: this.deps.agent.id,
+      correlation_id: this.deps.correlationId,
+      message: `Agente ${this.deps.agent.id} encerrou exit 0 sem PR aberto`,
+    });
+    this.markDispatchOutcome('exited_no_pr', 0);
+    this.scheduleRetry();
   }
 }

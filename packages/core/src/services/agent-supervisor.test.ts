@@ -243,7 +243,8 @@ describe('AgentSupervisor — stall', () => {
     clock.advance(11 * 60_000);
     await sup.tick();
     expect(killSpy).toHaveBeenCalledWith('SIGTERM');
-    expect(sup.state).toBe('terminating');
+    // onStall marca terminating; scheduleRetry transiciona para retrying em seguida
+    expect(['terminating', 'retrying']).toContain(sup.state);
   });
 
   it('não detecta stall se houve output recente', async () => {
@@ -323,5 +324,66 @@ describe('AgentSupervisor — PR detectado', () => {
     });
     expect(onDone).toHaveBeenCalledWith('r#1');
     expect(sup.state).toBe('done');
+  });
+});
+
+describe('AgentSupervisor — exit', () => {
+  it('exit code != 0 conta como crash e agenda retry', async () => {
+    const f = makeFixtures();
+    const cli = new FakeCli();
+    const clock = new FakeClock();
+    const sup = new AgentSupervisor({
+      issue: f.issue,
+      agent: f.agent,
+      workspace: f.workspace,
+      prompt: 'p',
+      correlationId: 'cid',
+      cli,
+      tracker: new FakeTracker(),
+      store: new FakeStore(),
+      clock,
+      log: new Logger({ level: 'error', write: () => undefined, now: () => new Date() }),
+      cfg: {
+        permissionMode: 'bypass',
+        binaryPath: '/x',
+        stallTimeoutMs: 600_000,
+        maxRetries: 3,
+        backoffMs: [60_000, 240_000, 960_000],
+      },
+    });
+    sup.start();
+    cli.last().finish(127);
+    // espera microtasks
+    await new Promise((r) => setImmediate(r));
+    expect(sup.state).toBe('retrying');
+  });
+
+  it('exit code 0 sem PR detectado também agenda retry', async () => {
+    const f = makeFixtures();
+    const cli = new FakeCli();
+    const clock = new FakeClock();
+    const sup = new AgentSupervisor({
+      issue: f.issue,
+      agent: f.agent,
+      workspace: f.workspace,
+      prompt: 'p',
+      correlationId: 'cid',
+      cli,
+      tracker: new FakeTracker(), // sem PR
+      store: new FakeStore(),
+      clock,
+      log: new Logger({ level: 'error', write: () => undefined, now: () => new Date() }),
+      cfg: {
+        permissionMode: 'bypass',
+        binaryPath: '/x',
+        stallTimeoutMs: 600_000,
+        maxRetries: 3,
+        backoffMs: [60_000, 240_000, 960_000],
+      },
+    });
+    sup.start();
+    cli.last().finish(0);
+    await new Promise((r) => setImmediate(r));
+    expect(sup.state).toBe('retrying');
   });
 });
