@@ -41,6 +41,7 @@ export class Reconciler {
     await this.scenarioLabelBlockedRemoved(findings, dryRun);
     await this.scenarioPrMergedExternally(findings, dryRun);
     await this.scenarioIssueEdited(findings, dryRun);
+    await this.scenarioOrphanWorkspaces(findings, dryRun);
     return findings;
   }
 
@@ -189,6 +190,35 @@ export class Reconciler {
           lastSyncedAt: this.deps.now().toISOString(),
         });
       }
+    }
+  }
+
+  /**
+   * Cenário 6: worktree presente em disco sem nenhum registro correspondente
+   * no DB (daemon crashou, máquina rebootou, etc). Política M1: log-only,
+   * NÃO restartar automaticamente — operador decide se faz cleanup manual.
+   */
+  private async scenarioOrphanWorkspaces(
+    findings: ReconciliationFinding[],
+    _dryRun: boolean,
+  ): Promise<void> {
+    const onDisk = this.deps.listWorkspacesOnDisk();
+    for (const dir of onDisk) {
+      const matchingRecord = this.deps.store
+        .listActiveIssues()
+        .find((r) => r.workspacePath !== null && r.workspacePath.endsWith(dir.issueId));
+      if (matchingRecord) continue;
+      findings.push({
+        scenario: 'orphan_workspace',
+        issueId: null,
+        action: 'log_only',
+        evidence: { workspaceDir: dir.issueId, path: dir.path },
+      });
+      this.deps.log.warn({
+        event: 'orphan_workspace_detected',
+        path: dir.path,
+        message: `Workspace órfão em ${dir.path} (sem registro no DB) — NÃO restartando automaticamente`,
+      });
     }
   }
 }

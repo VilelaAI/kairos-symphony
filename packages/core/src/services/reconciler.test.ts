@@ -274,3 +274,26 @@ describe('Reconciler — issue editada durante execução', () => {
     expect(store.getIssue('r#1')?.lastSyncedAt).toBe('2026-05-18T12:00:00.000Z');
   });
 });
+
+describe('Reconciler — orphan workspaces', () => {
+  it('worktree em disco sem registro no DB → log e NÃO restartar', async () => {
+    const tracker = new FakeTracker();
+    const store = new FakeStore();
+    const reconciler = new Reconciler({
+      tracker,
+      store,
+      log: logger,
+      now: () => new Date(),
+      activeSupervisors: () => new Map(),
+      cleanupWorkspace: () => undefined,
+      listWorkspacesOnDisk: () => [{ issueId: 'r-99', path: '/tmp/r-99' }],
+    });
+    const findings = await reconciler.run({ dryRun: false });
+    expect(findings).toContainEqual<ReconciliationFinding>({
+      scenario: 'orphan_workspace',
+      issueId: null,
+      action: 'log_only',
+      evidence: { workspaceDir: 'r-99', path: '/tmp/r-99' },
+    });
+  });
+});
