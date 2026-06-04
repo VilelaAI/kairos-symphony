@@ -3,7 +3,7 @@
 > Orquestrador always-on de coding agents para projetos de software.
 > Issue tracker como state machine. Multi-tracker, multi-CLI, PT-BR oficial.
 
-**Status:** 🚧 spec em desenvolvimento — sem implementação ainda. Veja [SPEC.md](SPEC.md) e [roadmap](#roadmap).
+**Status:** 🛠️ **alpha** — M1 walking skeleton mergeado. 5 packages com código (`daemon`, `core`, `adapter-github`, `cli-claude-code`, `factory-kairos-forge`), 4 subcomandos do daemon (`start`, `reconcile`, `ps`, `attach`) e conformance tests cobrindo SPEC §2–§15. Sem release publicada ainda; SPEC em [v0.4.0-draft](SPEC.md). Veja [Running](#running-m1-walking-skeleton) pra rodar localmente e [roadmap](#roadmap) pro plano.
 
 `kairos-symphony` é a camada de orquestração persistente do ecossistema KairOS. Pega os 45 agentes do [`kairos-forge`](https://github.com/VilelaAI/kairos-forge) (ou os agentes regulados do [`kairos-ai`](https://github.com/VilelaAI/kairos-ai)) e os põe pra trabalhar **continuamente** sobre um issue tracker — cada issue pega um agente dedicado, agentes rodam até o trabalho terminar, humano só revisa o resultado.
 
@@ -93,7 +93,7 @@ Para o roteiro end-to-end ver [docs/M1-DEMO.md](docs/M1-DEMO.md).
 
 ## Roadmap
 
-### v0.3 — Loop autônomo por issue (atual)
+### v0.3 — Loop autônomo por issue
 
 - Issues podem rodar em modo loop iterativo (Ralph Loop pattern Anthropic + `/goal` OpenAI)
 - Configuração via label da issue, config global ou frontmatter
@@ -159,11 +159,12 @@ A `mobilizar` continua útil pra trabalho pontual paralelo. `symphony` é pra "a
 
 ## Contribuir
 
-Repo está em fase de spec. Antes de implementar:
+Repo está em **alpha** — M1 walking skeleton mergeado, ainda sem release publicada. Antes de mandar PR:
 
-1. Leia [SPEC.md](SPEC.md) — contrato formal em RFC (MUST/SHOULD/MAY)
+1. Leia [SPEC.md](SPEC.md) — contrato formal em RFC (MUST/SHOULD/MAY); SPEC em v0.4.0-draft
 2. Veja [docs/decisao-arquitetural.md](docs/decisao-arquitetural.md) — por que Node/TS, por que daemon, por que multi-tracker
-3. Abra issue antes de PR — design discussions primeiro
+3. Rode o M1 localmente seguindo [docs/M1-DEMO.md](docs/M1-DEMO.md) antes de propor mudanças nos packages existentes
+4. Abra issue antes de PR — design discussions primeiro
 
 ## Ecossistema KairOS
 
