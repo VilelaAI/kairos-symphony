@@ -5,6 +5,34 @@ Todas as mudanças notáveis neste projeto serão documentadas aqui.
 Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
 Versionamento segue [Semantic Versioning](https://semver.org/lang/pt-BR/).
 
+## [Unreleased]
+
+### Adicionado — M1 Walking Skeleton (primeira implementação)
+
+A SPEC `0.4.0-draft` deixou de ser apenas contrato: o **M1 (walking skeleton)** está implementado, com o happy path end-to-end funcionando em hardware real (GitHub + Claude Code + kairos-forge) e coberto por **105 testes** (conformidade + integração + unitários) em 31 arquivos.
+
+- **Monorepo** pnpm workspaces em TypeScript (Node ≥ 22.5) com 5 packages: `core` (domínio + ports + serviços), `adapter-github`, `cli-claude-code`, `factory-kairos-forge` e `daemon`.
+- **Loop principal** poll → reconcile → dispatch → monitor → cleanup sobre os 6 estados canônicos da §2.
+- **Adapter GitHub** (Issues + detecção de PR via `Closes #N` e convenção de branch `symphony/<issue_id>`).
+- **Spawn de CLI** Claude Code via `node-pty` (PTY real, §4.1), com modo de permissão configurável.
+- **Fábrica kairos-forge** lendo personas `.md` do filesystem para construir o prompt (§6).
+- **Roteamento** completo: default + label `agent:<id>` + `routing.rules` por tipo de issue (§5).
+- **Workspace** isolado por git worktree, branch própria — nunca push direto na `main` (§12).
+- **Confiabilidade básica:** detecção de stall e crash + retry com backoff exponencial `[1min, 4min, 16min]`, máx 3 (§7-§8).
+- **Persistência** SQLite (`better-sqlite3`, WAL, schema versionado) que sobrevive a restart do daemon (§9).
+- **Reconciliação** dos 6 cenários da §9.1 + comando `symphony reconcile --dry-run`.
+- **Observabilidade:** logs JSON line-delimited em PT-BR com redaction de tokens (§11) + stream de terminal por agente em `<workspace>/.symphony/terminal.log` (§13.1).
+- **Config** via YAML + env `SYMPHONY_*` + flags de CLI (precedência flags > env > YAML), validada com Zod (§10).
+- **CLI `symphony`** (`packages/daemon`) com 4 subcomandos: `start`, `reconcile [--dry-run]`, `ps`, `attach <issue_id>`.
+- **Suíte de conformidade** `tests/conformance` mapeando SPEC §2-§15 + testes de integração (dispatch, reconcile, restart, stall) com fakes.
+- **CI** GitHub Actions (`.github/workflows/ci.yml`) rodando lint + typecheck + test + conformance em Ubuntu e macOS.
+- **`docs/M1-DEMO.md`** — roteiro manual de 8 passos (DoD humano) provando o end-to-end em ambiente real.
+- Specs e plano de implementação do M1 em `docs/superpowers/`.
+
+### Mudado
+
+- `README.md` e `SPEC.md`: status atualizado de "sem implementação" para "M1 implementado"; README ganhou a seção **Estado da implementação** (milestones M1-M5) e instruções de desenvolvimento; seção "Contribuir" reescrita para o fluxo pós-M1.
+
 ## [0.4.0] — 2026-05-14
 
 Versão resultante de um **reality-check** da SPEC contra a arquitetura do AgentsMesh — um orquestrador de coding agents já em produção (771 commits, 14 releases). O cruzamento expôs furos estruturais que teriam travado a implementação.

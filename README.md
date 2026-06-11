@@ -3,7 +3,7 @@
 > Orquestrador always-on de coding agents para projetos de software.
 > Issue tracker como state machine. Multi-tracker, multi-CLI, PT-BR oficial.
 
-**Status:** 🚧 spec em desenvolvimento — sem implementação ainda. Veja [SPEC.md](SPEC.md) e [roadmap](#roadmap).
+**Status:** 🟢 M1 walking skeleton implementado (TypeScript/Node) — happy path end-to-end com GitHub + Claude Code + kairos-forge rodando, 105 testes verdes. SPEC em `0.4.0-draft`. Veja [SPEC.md](SPEC.md), [estado da implementação](#estado-da-implementação) e [roadmap](#roadmap).
 
 `kairos-symphony` é a camada de orquestração persistente do ecossistema KairOS. Pega os 45 agentes do [`kairos-forge`](https://github.com/VilelaAI/kairos-forge) (ou os agentes regulados do [`kairos-ai`](https://github.com/VilelaAI/kairos-ai)) e os põe pra trabalhar **continuamente** sobre um issue tracker — cada issue pega um agente dedicado, agentes rodam até o trabalho terminar, humano só revisa o resultado.
 
@@ -72,6 +72,48 @@ Um daemon polla seu tracker a cada N segundos, pega issues no estado `ready`, cr
 - Não é orquestrador remoto multi-host — é **local-first**: o daemon roda no mesmo host onde você trabalha (laptop, devbox ou VPS pessoal). Sem control plane / data plane separados, sem runner distribuído. Operação remota gerenciada fica no `kairos-platform` (PRO). Ver §1.1 da [SPEC](SPEC.md).
 - Não tem versão hosted/SaaS no v1 — você roda no seu VPS ou devbox.
 
+## Estado da implementação
+
+A SPEC `0.4.0-draft` (18 seções) foi decomposta em 5 milestones de implementação. **M1 está pronto e verde** — happy path end-to-end real, validado por 105 testes (conformidade + integração + unitários) sobre 31 arquivos.
+
+| Milestone | Cobre | Estado |
+|---|---|---|
+| **M1 — Walking skeleton** | subset de §§2-7, 10, 11 + reconciliação completa §9.1 + observabilidade §13.1 + segurança mínima §12 | ✅ **pronto** |
+| M2 — Confiabilidade | heartbeat cooperativo, cenários de reconciliação avançados, hardening do PTY | 🔜 próximo |
+| M3 — Segurança & observabilidade | `/healthz`, `/metrics` Prometheus, audit log, sandbox forte | ⏳ planejado |
+| M4 — Harness-readiness | §16 completo (check no startup + re-validação + override) | ⏳ planejado |
+| M5 — Loop autônomo por issue | §17 completo (checkpoint, label `iterate:loop`, max-iterations, adapter per-CLI) | ⏳ planejado |
+
+O que **já roda** no M1:
+
+- **Monorepo** pnpm workspaces (`packages/{core,adapter-github,cli-claude-code,factory-kairos-forge,daemon}`), TypeScript Node ≥ 22.5.
+- **Loop principal** poll → reconcile → dispatch → monitor → cleanup, com os 6 estados canônicos da §2.
+- **Tracker:** adapter GitHub (Issues + detecção de PR via `Closes #N` e convenção de branch `symphony/<issue_id>`).
+- **CLI:** Claude Code via `node-pty` (PTY real, §4.1), modo de permissão configurável.
+- **Fábrica:** `kairos-forge` — lê personas `.md` do filesystem do plugin para construir o prompt.
+- **Roteamento:** default + label `agent:<id>` + `routing.rules` por tipo de issue.
+- **Workspace:** git worktree isolado por issue, branch própria (nunca push direto na `main`).
+- **Confiabilidade básica:** detecção de stall (sem output no PTY) e crash (exit != 0 / exit 0 sem PR), retry com backoff exponencial (máx 3).
+- **Persistência:** SQLite (`better-sqlite3`, WAL, schema versionado) — sobrevive a restart do daemon.
+- **Reconciliação:** todos os 6 cenários da §9.1 + `symphony reconcile --dry-run`.
+- **Observabilidade:** logs JSON line-delimited em PT-BR com redaction de tokens; stream de terminal por agente em `<workspace>/.symphony/terminal.log`.
+- **Config:** YAML + env `SYMPHONY_*` + flags de CLI (precedência: flags > env > YAML), validada com Zod.
+
+Fora do M1 (ver [roadmap](#roadmap)): multi-CLI (Codex, OpenCode), multi-tracker (GitLab, Jira, Linear), webhook receiver, loop autônomo, harness-readiness check.
+
+### Desenvolvimento
+
+```bash
+pnpm install        # Node ≥ 22.5, pnpm ≥ 11
+pnpm build          # tsc por package
+pnpm test           # 105 testes (vitest)
+pnpm test:conformance   # só a suíte de conformidade da SPEC
+pnpm lint           # biome
+pnpm typecheck
+```
+
+CI (`.github/workflows/ci.yml`) roda lint + typecheck + test + conformance em Ubuntu e macOS a cada push/PR.
+
 ## Running (M1 walking skeleton)
 
 Após `pnpm install && pnpm build`, o binário está em `packages/daemon/dist/bin.js`:
@@ -93,7 +135,9 @@ Para o roteiro end-to-end ver [docs/M1-DEMO.md](docs/M1-DEMO.md).
 
 ## Roadmap
 
-### v0.3 — Loop autônomo por issue (atual)
+Abaixo está o roadmap de **capacidades da SPEC** (evolução do contrato). O acompanhamento da **implementação** vai pela tabela de milestones em [Estado da implementação](#estado-da-implementação) — hoje em M1.
+
+### v0.3 — Loop autônomo por issue
 
 - Issues podem rodar em modo loop iterativo (Ralph Loop pattern Anthropic + `/goal` OpenAI)
 - Configuração via label da issue, config global ou frontmatter
@@ -159,11 +203,13 @@ A `mobilizar` continua útil pra trabalho pontual paralelo. `symphony` é pra "a
 
 ## Contribuir
 
-Repo está em fase de spec. Antes de implementar:
+O M1 (walking skeleton) já está implementado; o trabalho agora é avançar pelos milestones M2-M5 sem quebrar a conformidade da SPEC. Antes de abrir um PR:
 
-1. Leia [SPEC.md](SPEC.md) — contrato formal em RFC (MUST/SHOULD/MAY)
-2. Veja [docs/decisao-arquitetural.md](docs/decisao-arquitetural.md) — por que Node/TS, por que daemon, por que multi-tracker
-3. Abra issue antes de PR — design discussions primeiro
+1. Leia [SPEC.md](SPEC.md) — contrato formal em RFC (MUST/SHOULD/MAY). Mudança de comportamento começa pela SPEC.
+2. Veja [docs/decisao-arquitetural.md](docs/decisao-arquitetural.md) — por que Node/TS, por que daemon, por que multi-tracker.
+3. Rode `pnpm install && pnpm build && pnpm test` — a suíte de conformidade (`tests/conformance`) é o guard-rail; mantenha-a verde.
+4. Para entender o recorte de cada milestone, ver os specs de implementação em [`docs/superpowers/`](docs/superpowers).
+5. Abra issue antes de PR para mudanças arquiteturais — design discussions primeiro.
 
 ## Ecossistema KairOS
 
