@@ -1,3 +1,4 @@
+import { newCorrelationId } from '../domain/correlation.js';
 import type { IssueId } from '../domain/issue.js';
 import type { StateStore } from '../ports/store.js';
 import type { TrackerPort } from '../ports/tracker.js';
@@ -9,6 +10,7 @@ export type ReconciliationScenario =
   | 'label_blocked_removed'
   | 'pr_merged_externally'
   | 'issue_edited_during_execution'
+  | 'internal_state_lost'
   | 'orphan_workspace';
 
 export interface ReconciliationFinding {
@@ -30,6 +32,13 @@ export interface ReconcilerDeps {
   activeSupervisors: () => Map<IssueId, ActiveSupervisorRef>;
   cleanupWorkspace: (issueId: IssueId) => void;
   listWorkspacesOnDisk: () => Array<{ issueId: string; path: string }>;
+  /**
+   * Mapeia um issueId canônico para onde seu workspace estaria em disco. Quando
+   * fornecido, habilita a reconstrução de "estado interno perdido" (§9.1): casa
+   * issues ativas do tracker com worktrees órfãos para reconstruir o registro.
+   * Ausente → comportamento M1 (órfão é apenas logado).
+   */
+  describeWorkspace?: (issueId: IssueId) => { dirName: string; path: string; branchName: string };
 }
 
 export class Reconciler {
@@ -41,7 +50,7 @@ export class Reconciler {
     await this.scenarioLabelBlockedRemoved(findings, dryRun);
     await this.scenarioPrMergedExternally(findings, dryRun);
     await this.scenarioIssueEdited(findings, dryRun);
-    await this.scenarioOrphanWorkspaces(findings, dryRun);
+    await this.scenarioInternalStateLost(findings, dryRun);
     return findings;
   }
 
@@ -194,20 +203,95 @@ export class Reconciler {
   }
 
   /**
-   * Cenário 6: worktree presente em disco sem nenhum registro correspondente
-   * no DB (daemon crashou, máquina rebootou, etc). Política M1: log-only,
-   * NÃO restartar automaticamente — operador decide se faz cleanup manual.
+   * Cenário 6: worktree presente em disco sem registro correspondente no DB
+   * (daemon crashou, SQLite apagado/corrompido, máquina rebootou).
+   *
+   * Se `describeWorkspace` está disponível, tentamos **reconstruir** o estado
+   * interno a partir do tracker (§9.1, linha "Estado interno perdido"): casamos
+   * o diretório órfão com uma issue ativa no tracker (`in_progress` /
+   * `review_pending`) e recriamos o `IssueRecord`. Como o processo morreu e a
+   * SPEC §9 proíbe restart automático, a issue reconstruída entra em
+   * `blocked: symphony:needs-reconciliation` com o workspace preservado, para
+   * retomada explícita pelo operador.
+   *
+   * Sem casamento no tracker (ou sem `describeWorkspace`), mantemos a política
+   * conservadora do M1: apenas logar o órfão, sem destruir trabalho.
    */
-  private async scenarioOrphanWorkspaces(
+  private async scenarioInternalStateLost(
     findings: ReconciliationFinding[],
-    _dryRun: boolean,
+    dryRun: boolean,
   ): Promise<void> {
     const onDisk = this.deps.listWorkspacesOnDisk();
+    if (onDisk.length === 0) return;
+
+    const describe = this.deps.describeWorkspace;
+    const trackerActive = describe
+      ? [
+          ...(await this.deps.tracker.fetchIssuesByState('in_progress')),
+          ...(await this.deps.tracker.fetchIssuesByState('review_pending')),
+        ]
+      : [];
+
     for (const dir of onDisk) {
       const matchingRecord = this.deps.store
         .listActiveIssues()
         .find((r) => r.workspacePath?.endsWith(dir.issueId));
       if (matchingRecord) continue;
+
+      const match = describe
+        ? trackerActive.find((issue) => describe(issue.id).dirName === dir.issueId)
+        : undefined;
+
+      if (describe && match && !this.deps.store.getIssue(match.id)) {
+        const desc = describe(match.id);
+        const reason = 'symphony:needs-reconciliation';
+        findings.push({
+          scenario: 'internal_state_lost',
+          issueId: match.id,
+          action: 'reconstruct_blocked',
+          evidence: { workspaceDir: dir.issueId, path: dir.path, trackerState: match.state },
+        });
+        this.deps.log.warn({
+          event: 'state_reconstructed',
+          issue_id: match.id,
+          scenario: 'internal_state_lost',
+          tracker_state: match.state,
+          dry_run: dryRun,
+          path: dir.path,
+          message: `Estado interno perdido para ${match.id} — reconstruído a partir do tracker; bloqueando para retomada manual (sem restart automático)`,
+        });
+        if (!dryRun) {
+          const now = this.deps.now().toISOString();
+          const correlationId = newCorrelationId();
+          this.deps.store.upsertIssue({
+            issueId: match.id,
+            trackerType: 'github',
+            state: 'blocked',
+            agentId: null,
+            workspacePath: desc.path,
+            branchName: desc.branchName,
+            startedAt: null,
+            finishedAt: null,
+            retryCount: 0,
+            prNumber: null,
+            correlationId,
+            lastSyncedAt: now,
+            blockedReason: reason,
+          });
+          this.deps.store.recordTransition({
+            issueId: match.id,
+            fromState: match.state,
+            toState: 'blocked',
+            reason,
+            evidence: JSON.stringify({ reconstructedFrom: dir.path }),
+            correlationId,
+            occurredAt: now,
+          });
+          await this.deps.tracker.transitionState(match.id, 'blocked', reason);
+        }
+        continue;
+      }
+
       findings.push({
         scenario: 'orphan_workspace',
         issueId: null,
@@ -217,7 +301,7 @@ export class Reconciler {
       this.deps.log.warn({
         event: 'orphan_workspace_detected',
         path: dir.path,
-        message: `Workspace órfão em ${dir.path} (sem registro no DB) — NÃO restartando automaticamente`,
+        message: `Workspace órfão em ${dir.path} (sem registro no DB nem issue ativa no tracker) — NÃO restartando automaticamente`,
       });
     }
   }

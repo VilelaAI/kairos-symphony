@@ -30,6 +30,8 @@ export interface DaemonDeps {
   reconciler: Reconciler;
   pollIntervalMs: number;
   cfg: DaemonCfg;
+  /** Leitor de heartbeat cooperativo (§8.1) repassado aos supervisores. */
+  readHeartbeat?: (path: string) => number | null;
 }
 
 export class Daemon {
@@ -107,6 +109,7 @@ export class Daemon {
       clock: this.deps.clock,
       log: this.deps.log,
       cfg: this.deps.cfg,
+      readHeartbeat: this.deps.readHeartbeat,
       onDone: (id) => this.removeSupervisor(id),
     });
     this.supervisors.set(issue.id, sup);

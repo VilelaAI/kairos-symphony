@@ -143,6 +143,7 @@ function makeFixtures() {
     branchName: 'symphony/r-1',
     baseBranch: 'main',
     terminalLogPath: join(wsPath, '.symphony', 'terminal.log'),
+    heartbeatPath: join(wsPath, '.symphony', 'heartbeat'),
   };
   const issue: Issue = {
     id: 'r#1',
@@ -501,5 +502,146 @@ describe('AgentSupervisor — max retries', () => {
         reason: 'symphony:max-retries-exceeded',
       }),
     );
+  });
+});
+
+const baseCfg = {
+  permissionMode: 'bypass' as const,
+  binaryPath: '/x',
+  stallTimeoutMs: 600_000,
+  maxRetries: 3,
+  backoffMs: [60_000, 240_000, 960_000],
+};
+
+describe('AgentSupervisor — heartbeat cooperativo (§8.1)', () => {
+  it('heartbeat recente mantém o agente vivo mesmo sem output no PTY', async () => {
+    const f = makeFixtures();
+    const cli = new FakeCli();
+    const clock = new FakeClock();
+    let heartbeatAt: number | null = null;
+    const sup = new AgentSupervisor({
+      issue: f.issue,
+      agent: f.agent,
+      workspace: f.workspace,
+      prompt: 'p',
+      correlationId: 'cid',
+      cli,
+      tracker: new FakeTracker(),
+      store: new FakeStore(),
+      clock,
+      log: new Logger({ level: 'error', write: () => undefined, now: () => new Date() }),
+      cfg: baseCfg,
+      readHeartbeat: () => heartbeatAt,
+    });
+    sup.start();
+    // t+5min: agente atualiza o heartbeat (sem nenhum output no PTY)
+    clock.advance(5 * 60_000);
+    heartbeatAt = clock.now().getTime();
+    // t+11min desde o spawn: PTY silencioso há 11min, mas heartbeat há 6min → vivo
+    clock.advance(6 * 60_000);
+    const killSpy = vi.spyOn(cli.last(), 'kill');
+    await sup.tick();
+    expect(killSpy).not.toHaveBeenCalled();
+    expect(sup.state).toBe('running');
+    // heartbeat congela; passa o stallTimeout desde o último heartbeat → stall
+    clock.advance(11 * 60_000);
+    await sup.tick();
+    expect(killSpy).toHaveBeenCalledWith('SIGTERM');
+    expect(['terminating', 'retrying']).toContain(sup.state);
+  });
+});
+
+describe('AgentSupervisor — spawn do PTY falha (§4.1)', () => {
+  it('erro ao spawnar conta como crash e agenda retry, sem derrubar', () => {
+    const f = makeFixtures();
+    const clock = new FakeClock();
+    const throwingCli: CliPort = {
+      spawn() {
+        throw new Error('pty boom');
+      },
+    };
+    const sup = new AgentSupervisor({
+      issue: f.issue,
+      agent: f.agent,
+      workspace: f.workspace,
+      prompt: 'p',
+      correlationId: 'cid',
+      cli: throwingCli,
+      tracker: new FakeTracker(),
+      store: new FakeStore(),
+      clock,
+      log: new Logger({ level: 'error', write: () => undefined, now: () => new Date() }),
+      cfg: baseCfg,
+    });
+    sup.start();
+    expect(sup.state).toBe('retrying');
+  });
+});
+
+describe('AgentSupervisor — escalada SIGTERM→SIGKILL (§4.1)', () => {
+  it('processo que ignora SIGTERM recebe SIGKILL após killGraceMs', () => {
+    const f = makeFixtures();
+    const clock = new FakeClock();
+    const signals: Array<string | undefined> = [];
+    const stubborn: AgentProcess = {
+      pid: 1,
+      onData() {},
+      onExit() {}, // nunca chama o handler de saída
+      kill(sig) {
+        signals.push(sig);
+      },
+    };
+    const cli: CliPort = {
+      spawn() {
+        return stubborn;
+      },
+    };
+    const sup = new AgentSupervisor({
+      issue: f.issue,
+      agent: f.agent,
+      workspace: f.workspace,
+      prompt: 'p',
+      correlationId: 'cid',
+      cli,
+      tracker: new FakeTracker(),
+      store: new FakeStore(),
+      clock,
+      log: new Logger({ level: 'error', write: () => undefined, now: () => new Date() }),
+      cfg: { ...baseCfg, killGraceMs: 5_000 },
+    });
+    sup.start();
+    sup.terminate();
+    expect(signals).toContain('SIGTERM');
+    expect(signals).not.toContain('SIGKILL');
+    clock.advance(5_000);
+    expect(signals).toContain('SIGKILL');
+  });
+});
+
+describe('AgentSupervisor — diagnóstico (§8.2)', () => {
+  it('inclui as últimas linhas de output no log de crash', async () => {
+    const f = makeFixtures();
+    const cli = new FakeCli();
+    const clock = new FakeClock();
+    const lines: string[] = [];
+    const sup = new AgentSupervisor({
+      issue: f.issue,
+      agent: f.agent,
+      workspace: f.workspace,
+      prompt: 'p',
+      correlationId: 'cid',
+      cli,
+      tracker: new FakeTracker(),
+      store: new FakeStore(),
+      clock,
+      log: new Logger({ level: 'error', write: (l) => lines.push(l), now: () => new Date() }),
+      cfg: baseCfg,
+    });
+    sup.start();
+    cli.last().emit('passo 1 ok\nERRO fatal: boom\n');
+    cli.last().finish(1);
+    await new Promise((r) => setImmediate(r));
+    const crash = lines.map((l) => JSON.parse(l)).find((e) => e.event === 'agent_crashed');
+    expect(crash?.last_output).toContain('ERRO fatal: boom');
   });
 });

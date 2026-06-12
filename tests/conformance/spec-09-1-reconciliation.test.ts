@@ -239,6 +239,43 @@ describe('SPEC §9.1 — Reconciliação dos 6 cenários', () => {
   });
 });
 
+describe('SPEC §9.1 — estado interno perdido (reconstrução, M2)', () => {
+  const describeWs = (id: string) => ({
+    dirName: id.replace(/[/#]/g, '-'),
+    path: `/ws/${id.replace(/[/#]/g, '-')}`,
+    branchName: `symphony/${id.replace(/[/#]/g, '-')}`,
+  });
+
+  it('DB vazio + worktree em disco + issue ativa no tracker → reconstrói em blocked, sem auto-restart', async () => {
+    const tracker = new FakeTracker();
+    tracker.issuesByState.set('in_progress', [
+      { id: 'r#1', number: 1, title: 't', body: 'b', labels: [], state: 'in_progress' },
+    ]);
+    const store = new FakeStore(); // SQLite "apagado/corrompido"
+    const reconciler = new Reconciler({
+      tracker,
+      store,
+      log: logger,
+      now: () => new Date('2026-05-18T13:00:00Z'),
+      activeSupervisors: () => new Map(),
+      cleanupWorkspace: () => undefined,
+      listWorkspacesOnDisk: () => [{ issueId: 'r-1', path: '/ws/r-1' }],
+      describeWorkspace: describeWs,
+    });
+    const findings = await reconciler.run({ dryRun: false });
+    expect(findings).toContainEqual<ReconciliationFinding>({
+      scenario: 'internal_state_lost',
+      issueId: 'r#1',
+      action: 'reconstruct_blocked',
+      evidence: { workspaceDir: 'r-1', path: '/ws/r-1', trackerState: 'in_progress' },
+    });
+    // Estado reconstruído a partir do tracker + disco, preservado em blocked para retomada manual
+    expect(store.getIssue('r#1')?.state).toBe('blocked');
+    expect(store.getIssue('r#1')?.blockedReason).toBe('symphony:needs-reconciliation');
+    expect(store.getIssue('r#1')?.workspacePath).toBe('/ws/r-1');
+  });
+});
+
 describe('SPEC §9.1 — dry-run não aplica efeitos', () => {
   it('múltiplos cenários em dry-run: findings reportados, store/tracker intactos', async () => {
     const tracker = new FakeTracker();

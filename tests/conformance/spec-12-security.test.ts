@@ -66,6 +66,7 @@ describe('SPEC §12 — Segurança', () => {
       branchName: 's',
       baseBranch: 'm',
       terminalLogPath: '/w/t',
+      heartbeatPath: '/w/h',
     };
     expect(() => pb.build({ issue, agent, workspace })).toThrow(PromptTooLargeError);
   });

@@ -63,6 +63,7 @@ describe('SPEC §13.1 — Terminal stream persistido em terminal.log', () => {
         branchName: 'symphony/r-1',
         baseBranch: 'main',
         terminalLogPath: join(wsPath, '.symphony', 'terminal.log'),
+        heartbeatPath: join(wsPath, '.symphony', 'heartbeat'),
       };
       const issue: Issue = {
         id: 'r#1',

@@ -23,6 +23,10 @@ export class ClaudeCodeCli implements CliPort {
     if (isShellFixture) {
       proc.write(`${opts.prompt}\n`);
     }
+    let exited = false;
+    proc.onExit(() => {
+      exited = true;
+    });
     return {
       pid: proc.pid,
       onData(h) {
@@ -34,7 +38,15 @@ export class ClaudeCodeCli implements CliPort {
         );
       },
       kill(signal) {
-        proc.kill(signal ?? 'SIGTERM');
+        // §4.1 hardening: kill após o processo já ter saído faz o node-pty
+        // lançar (ESRCH); torná-lo idempotente para suportar a escalada
+        // SIGTERM→SIGKILL e o shutdown concorrente do daemon.
+        if (exited) return;
+        try {
+          proc.kill(signal ?? 'SIGTERM');
+        } catch {
+          // processo já morreu entre a checagem e o kill — ignorar.
+        }
       },
     };
   }

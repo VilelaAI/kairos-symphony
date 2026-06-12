@@ -1,4 +1,4 @@
-import { appendFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, statSync, writeFileSync } from 'node:fs';
 import type { AgentDescriptor } from '../domain/agent.js';
 import type { Issue, IssueId } from '../domain/issue.js';
 import type { WorkspaceInfo } from '../domain/workspace.js';
@@ -24,7 +24,12 @@ export interface SupervisorCfg {
   maxRetries: number;
   backoffMs: ReadonlyArray<number>;
   exitNoPrGraceMs?: number; // default 30_000
+  /** Janela (ms) entre SIGTERM e SIGKILL ao encerrar um processo (§4.1). Default 5_000. */
+  killGraceMs?: number;
 }
+
+/** Quantas linhas de output recente preservar para diagnóstico (§8.2). */
+const DIAGNOSTIC_TAIL_LINES = 50;
 
 export interface SupervisorDeps {
   issue: Issue;
@@ -39,6 +44,12 @@ export interface SupervisorDeps {
   log: Logger;
   cfg: SupervisorCfg;
   onDone?: (issueId: IssueId) => void;
+  /**
+   * Lê o instante (ms epoch) do último heartbeat cooperativo (§8.1). Default:
+   * mtime do arquivo `workspace.heartbeatPath`, ou null se ainda não existir.
+   * Injetável para testes determinísticos com clock falso.
+   */
+  readHeartbeat?: ((path: string) => number | null) | undefined;
 }
 
 export class AgentSupervisor {
@@ -48,6 +59,10 @@ export class AgentSupervisor {
   private retryCount = 0;
   private dispatchId: number | null = null;
   private retryHandle: TimerHandle | null = null;
+  private killTimer: TimerHandle | null = null;
+  private exited = false;
+  private recentLines: string[] = [];
+  private pendingLine = '';
 
   constructor(private readonly deps: SupervisorDeps) {}
 
@@ -70,15 +85,41 @@ export class AgentSupervisor {
       correlationId: this.deps.correlationId,
     });
     writeFileSync(this.deps.workspace.terminalLogPath, '');
-    this.proc = this.deps.cli.spawn({
-      binaryPath: this.deps.cfg.binaryPath,
-      cwd: this.deps.workspace.path,
-      prompt: this.deps.prompt,
-      permissionMode: this.deps.cfg.permissionMode,
-    });
+    this.exited = false;
+    this.recentLines = [];
+    this.pendingLine = '';
+    if (this.killTimer !== null) {
+      this.deps.clock.clearTimeout(this.killTimer);
+      this.killTimer = null;
+    }
+    try {
+      this.proc = this.deps.cli.spawn({
+        binaryPath: this.deps.cfg.binaryPath,
+        cwd: this.deps.workspace.path,
+        prompt: this.deps.prompt,
+        permissionMode: this.deps.cfg.permissionMode,
+      });
+    } catch (err) {
+      // §4.1: falha de spawn do PTY conta como crash da issue, não derruba o daemon.
+      this.deps.log.error({
+        event: 'agent_crashed',
+        issue_id: this.deps.issue.id,
+        agent_id: this.deps.agent.id,
+        exit_code: null,
+        error: err instanceof Error ? err.message : String(err),
+        correlation_id: this.deps.correlationId,
+        message: `Falha ao spawnar PTY para ${this.deps.issue.id}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      });
+      this.markDispatchOutcome('crashed', null);
+      this.scheduleRetry();
+      return;
+    }
     this.lastOutputAt = this.deps.clock.now().getTime();
     this.proc.onData((chunk) => {
       appendFileSync(this.deps.workspace.terminalLogPath, chunk);
+      this.captureOutput(chunk);
       this.lastOutputAt = this.deps.clock.now().getTime();
     });
     this.proc.onExit((code) => {
@@ -99,16 +140,64 @@ export class AgentSupervisor {
       return;
     }
     this.state = 'terminating';
-    this.proc?.kill('SIGTERM');
+    this.killWithEscalation();
     if (this.retryHandle !== null) {
       this.deps.clock.clearTimeout(this.retryHandle);
       this.retryHandle = null;
     }
   }
 
+  /**
+   * Encerra o processo de forma graciosa: SIGTERM e, se não sair dentro de
+   * `killGraceMs`, SIGKILL (§4.1 hardening). Idempotente — o timer de grace é
+   * cancelado quando o processo sai de fato (`exited`).
+   */
+  private killWithEscalation(): void {
+    const target = this.proc;
+    if (target === null || this.exited) return;
+    target.kill('SIGTERM');
+    const grace = this.deps.cfg.killGraceMs ?? 5_000;
+    if (this.killTimer !== null) this.deps.clock.clearTimeout(this.killTimer);
+    this.killTimer = this.deps.clock.setTimeout(() => {
+      this.killTimer = null;
+      // Não escalar se o processo já saiu ou se um novo dispatch (retry) começou.
+      if (this.exited || this.proc !== target) return;
+      this.deps.log.warn({
+        event: 'agent_sigkilled',
+        issue_id: this.deps.issue.id,
+        agent_id: this.deps.agent.id,
+        correlation_id: this.deps.correlationId,
+        message: `Agente ${this.deps.agent.id} não saiu após SIGTERM — enviando SIGKILL`,
+      });
+      target.kill('SIGKILL');
+    }, grace);
+  }
+
+  /** Mantém um ring buffer das últimas linhas para diagnóstico (§8.2). */
+  private captureOutput(chunk: string): void {
+    const text = this.pendingLine + chunk;
+    const parts = text.split('\n');
+    this.pendingLine = parts.pop() ?? '';
+    for (const line of parts) {
+      this.recentLines.push(line);
+    }
+    if (this.recentLines.length > DIAGNOSTIC_TAIL_LINES) {
+      this.recentLines.splice(0, this.recentLines.length - DIAGNOSTIC_TAIL_LINES);
+    }
+  }
+
+  private tailDiagnostics(): string {
+    const lines = [...this.recentLines];
+    if (this.pendingLine.length > 0) lines.push(this.pendingLine);
+    return lines.slice(-DIAGNOSTIC_TAIL_LINES).join('\n');
+  }
+
   async tick(): Promise<void> {
     if (this.state !== 'running') return;
-    const ageMs = this.deps.clock.now().getTime() - this.lastOutputAt;
+    // §8.1: vivo = teve output no PTY OU atualizou o heartbeat cooperativo.
+    // Só consideramos stall quando ambos os sinais estão silenciosos.
+    const liveness = Math.max(this.lastOutputAt, this.lastHeartbeatAt());
+    const ageMs = this.deps.clock.now().getTime() - liveness;
     if (ageMs > this.deps.cfg.stallTimeoutMs) {
       this.onStall();
       return;
@@ -119,16 +208,22 @@ export class AgentSupervisor {
     }
   }
 
+  private lastHeartbeatAt(): number {
+    const read = this.deps.readHeartbeat ?? defaultReadHeartbeat;
+    return read(this.deps.workspace.heartbeatPath) ?? 0;
+  }
+
   private onStall(): void {
     this.deps.log.warn({
       event: 'agent_stalled',
       issue_id: this.deps.issue.id,
       agent_id: this.deps.agent.id,
       correlation_id: this.deps.correlationId,
+      last_output: this.tailDiagnostics(),
       message: `Agente ${this.deps.agent.id} stall detectado para issue ${this.deps.issue.id}`,
     });
     this.state = 'terminating';
-    this.proc?.kill('SIGTERM');
+    this.killWithEscalation();
     this.markDispatchOutcome('stalled', null);
     this.scheduleRetry();
   }
@@ -221,6 +316,11 @@ export class AgentSupervisor {
   }
 
   private async onProcessExit(code: number): Promise<void> {
+    this.exited = true;
+    if (this.killTimer !== null) {
+      this.deps.clock.clearTimeout(this.killTimer);
+      this.killTimer = null;
+    }
     if (this.state === 'terminating') {
       // já tratado (stall→kill ou cleanup externo)
       return;
@@ -232,6 +332,7 @@ export class AgentSupervisor {
         agent_id: this.deps.agent.id,
         exit_code: code,
         correlation_id: this.deps.correlationId,
+        last_output: this.tailDiagnostics(),
         message: `Agente ${this.deps.agent.id} crashou (exit ${code})`,
       });
       this.markDispatchOutcome('crashed', code);
@@ -252,5 +353,15 @@ export class AgentSupervisor {
     });
     this.markDispatchOutcome('exited_no_pr', 0);
     this.scheduleRetry();
+  }
+}
+
+/** Lê o mtime do arquivo de heartbeat em ms epoch; null se ainda não existir. */
+function defaultReadHeartbeat(path: string): number | null {
+  if (!existsSync(path)) return null;
+  try {
+    return statSync(path).mtimeMs;
+  } catch {
+    return null;
   }
 }

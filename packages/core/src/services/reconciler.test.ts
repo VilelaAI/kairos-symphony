@@ -276,7 +276,7 @@ describe('Reconciler — issue editada durante execução', () => {
 });
 
 describe('Reconciler — orphan workspaces', () => {
-  it('worktree em disco sem registro no DB → log e NÃO restartar', async () => {
+  it('worktree em disco sem registro no DB nem match no tracker → log e NÃO restartar', async () => {
     const tracker = new FakeTracker();
     const store = new FakeStore();
     const reconciler = new Reconciler({
@@ -295,6 +295,82 @@ describe('Reconciler — orphan workspaces', () => {
       action: 'log_only',
       evidence: { workspaceDir: 'r-99', path: '/tmp/r-99' },
     });
+  });
+});
+
+const describeWs = (id: string) => ({
+  dirName: id.replace(/[/#]/g, '-'),
+  path: `/ws/${id.replace(/[/#]/g, '-')}`,
+  branchName: `symphony/${id.replace(/[/#]/g, '-')}`,
+});
+
+describe('Reconciler — estado interno perdido (§9.1)', () => {
+  it('worktree órfão que casa com issue ativa no tracker → reconstrói em blocked (sem restart)', async () => {
+    const tracker = new FakeTracker();
+    tracker.issuesByState.set('in_progress', [
+      { id: 'owner/repo#7', number: 7, title: 't', body: 'b', labels: [], state: 'in_progress' },
+    ]);
+    const store = new FakeStore(); // DB vazio (apagado/corrompido)
+    const reconciler = new Reconciler({
+      tracker,
+      store,
+      log: logger,
+      now: () => new Date('2026-05-18T13:00:00Z'),
+      activeSupervisors: () => new Map(),
+      cleanupWorkspace: () => undefined,
+      listWorkspacesOnDisk: () => [{ issueId: 'owner-repo-7', path: '/ws/owner-repo-7' }],
+      describeWorkspace: describeWs,
+    });
+    const findings = await reconciler.run({ dryRun: false });
+    expect(findings).toContainEqual<ReconciliationFinding>({
+      scenario: 'internal_state_lost',
+      issueId: 'owner/repo#7',
+      action: 'reconstruct_blocked',
+      evidence: {
+        workspaceDir: 'owner-repo-7',
+        path: '/ws/owner-repo-7',
+        trackerState: 'in_progress',
+      },
+    });
+    const rebuilt = store.getIssue('owner/repo#7');
+    expect(rebuilt?.state).toBe('blocked');
+    expect(rebuilt?.blockedReason).toBe('symphony:needs-reconciliation');
+    expect(rebuilt?.workspacePath).toBe('/ws/owner-repo-7');
+    expect(rebuilt?.branchName).toBe('symphony/owner-repo-7');
+    expect(tracker.transitions).toContainEqual({
+      issueId: 'owner/repo#7',
+      to: 'blocked',
+      reason: 'symphony:needs-reconciliation',
+    });
+  });
+
+  it('dry-run produz finding sem mutar store nem tracker', async () => {
+    const tracker = new FakeTracker();
+    tracker.issuesByState.set('review_pending', [
+      {
+        id: 'owner/repo#7',
+        number: 7,
+        title: 't',
+        body: 'b',
+        labels: [],
+        state: 'review_pending',
+      },
+    ]);
+    const store = new FakeStore();
+    const reconciler = new Reconciler({
+      tracker,
+      store,
+      log: logger,
+      now: () => new Date('2026-05-18T13:00:00Z'),
+      activeSupervisors: () => new Map(),
+      cleanupWorkspace: () => undefined,
+      listWorkspacesOnDisk: () => [{ issueId: 'owner-repo-7', path: '/ws/owner-repo-7' }],
+      describeWorkspace: describeWs,
+    });
+    const findings = await reconciler.run({ dryRun: true });
+    expect(findings.some((f) => f.scenario === 'internal_state_lost')).toBe(true);
+    expect(store.getIssue('owner/repo#7')).toBeNull();
+    expect(tracker.transitions).toHaveLength(0);
   });
 });
 

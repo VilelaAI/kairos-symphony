@@ -74,7 +74,23 @@ export class WorkspaceManager {
       branchName,
       baseBranch: this.opts.baseBranch,
       terminalLogPath: resolve(symphonyDir, 'terminal.log'),
+      heartbeatPath: resolve(symphonyDir, 'heartbeat'),
     };
+  }
+
+  /**
+   * Descreve onde um workspace estaria/está em disco sem criá-lo — usado pela
+   * reconciliação de "estado interno perdido" (§9.1) para casar issues do
+   * tracker com worktrees órfãos e reconstruir o registro.
+   */
+  describe(issueId: IssueId): { dirName: string; path: string; branchName: string } {
+    const path = this.resolvePath(issueId);
+    const dirName = safeIssueDirName(issueId);
+    const branchName = (this.opts.branchPattern ?? 'symphony/{issue_id}').replace(
+      '{issue_id}',
+      dirName,
+    );
+    return { dirName, path, branchName };
   }
 
   cleanup(issueId: IssueId): void {

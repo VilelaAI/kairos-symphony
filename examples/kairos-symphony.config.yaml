@@ -74,7 +74,9 @@ routing:
 # ─────────────────────────────────────────────────────────────────────
 limits:
   concurrent_agents: 5                  # quantos agentes em paralelo no host
-  stall_timeout_ms: 600000              # 10min sem heartbeat = stalled
+  stall_timeout_ms: 600000              # 10min sem output nem heartbeat = stalled
+  heartbeat_interval_ms: 30000          # intervalo sugerido ao agente p/ atualizar .symphony/heartbeat
+  kill_grace_ms: 5000                   # janela entre SIGTERM e SIGKILL ao encerrar um agente
   max_retries: 3                        # tentativas após crash antes de bloquear
   retry_backoff_ms: [60000, 240000, 960000]  # 1min, 4min, 16min
 

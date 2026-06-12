@@ -7,6 +7,19 @@ Versionamento segue [Semantic Versioning](https://semver.org/lang/pt-BR/).
 
 ## [Unreleased]
 
+### Adicionado — M2 Confiabilidade
+
+Segundo milestone de implementação. Fecha os três pontos de confiabilidade que o M1 deixou em aberto, mantendo a suíte verde (**114 testes** em 32 arquivos).
+
+- **Heartbeat cooperativo (§8.1).** Além do silêncio do PTY, o supervisor agora considera um arquivo de heartbeat (`<workspace>/.symphony/heartbeat`) que o agente atualiza periodicamente. Um agente "pensando" (sem output, mas atualizando o heartbeat) não é mais morto por engano; o stall só dispara quando **ambos** os sinais ficam silenciosos por mais de `stall_timeout_ms`. O `PromptBuilder` instrui o agente a atualizar o heartbeat; intervalo configurável via `limits.heartbeat_interval_ms`.
+- **Hardening do spawn de PTY (§4.1).**
+  - Encerramento gracioso **SIGTERM → grace → SIGKILL** (`limits.kill_grace_ms`, default 5s) em stall e shutdown, com guarda para não matar um processo de retry recém-spawnado.
+  - Falha ao spawnar o PTY passa a ser tratada como **crash daquela issue** (retry), em vez de derrubar o daemon.
+  - `kill` do adapter Claude Code agora é **idempotente** (não lança `ESRCH` ao matar processo já encerrado).
+  - Captura das **últimas 50 linhas** de output (`last_output`) nos logs de `agent_crashed`/`agent_stalled` para diagnóstico (§8.2).
+- **Reconstrução de estado interno perdido (§9.1, 6º cenário).** Quando o SQLite é apagado/corrompido mas há worktrees em disco, o reconciliador casa cada worktree órfão com uma issue ativa no tracker (`in_progress`/`review_pending`) e **reconstrói** o `IssueRecord`. Como o processo morreu e a §9 proíbe restart automático, a issue reconstruída entra em `blocked: symphony:needs-reconciliation` com o workspace preservado, para retomada explícita pelo operador. Worktrees sem match no tracker continuam apenas logados (política conservadora do M1). Novos eventos `state_reconstructed`/`agent_sigkilled`.
+- **Config:** novos campos `limits.heartbeat_interval_ms` (default 30000) e `limits.kill_grace_ms` (default 5000).
+
 ### Adicionado — M1 Walking Skeleton (primeira implementação)
 
 A SPEC `0.4.0-draft` deixou de ser apenas contrato: o **M1 (walking skeleton)** está implementado, com o happy path end-to-end funcionando em hardware real (GitHub + Claude Code + kairos-forge) e coberto por **105 testes** (conformidade + integração + unitários) em 31 arquivos.

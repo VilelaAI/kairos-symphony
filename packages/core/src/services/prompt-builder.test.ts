@@ -27,6 +27,7 @@ const workspace: WorkspaceInfo = {
   branchName: 'symphony/42',
   baseBranch: 'main',
   terminalLogPath: '/var/symphony/workspaces/VilelaAI-repo-42/.symphony/terminal.log',
+  heartbeatPath: '/var/symphony/workspaces/VilelaAI-repo-42/.symphony/heartbeat',
 };
 
 describe('PromptBuilder', () => {

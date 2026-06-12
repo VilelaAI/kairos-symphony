@@ -52,7 +52,10 @@ export function buildDaemon(
     defaultAgent: cfg.routing.default_agent,
     rules: cfg.routing.rules,
   });
-  const promptBuilder = new PromptBuilder({ maxBytes: cfg.limits.prompt_max_size_bytes });
+  const promptBuilder = new PromptBuilder({
+    maxBytes: cfg.limits.prompt_max_size_bytes,
+    heartbeatIntervalMs: cfg.limits.heartbeat_interval_ms,
+  });
   // biome-ignore lint/style/useConst: forward reference — daemon precisa existir antes do Reconciler
   let daemon: Daemon;
   const reconciler = new Reconciler({
@@ -63,6 +66,7 @@ export function buildDaemon(
     activeSupervisors: () => daemon.activeSupervisors() as never,
     cleanupWorkspace: (id) => wm.cleanup(id),
     listWorkspacesOnDisk: () => wm.listAllOnDisk(),
+    describeWorkspace: (id) => wm.describe(id),
   });
   daemon = new Daemon({
     tracker,
@@ -83,6 +87,7 @@ export function buildDaemon(
       backoffMs: cfg.limits.retry_backoff_ms,
       permissionMode: cfg.cli.permission_mode,
       binaryPath: cfg.cli.binary_path,
+      killGraceMs: cfg.limits.kill_grace_ms,
     },
   });
   return { daemon, store, log };

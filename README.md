@@ -3,7 +3,7 @@
 > Orquestrador always-on de coding agents para projetos de software.
 > Issue tracker como state machine. Multi-tracker, multi-CLI, PT-BR oficial.
 
-**Status:** 🟢 M1 walking skeleton implementado (TypeScript/Node) — happy path end-to-end com GitHub + Claude Code + kairos-forge rodando, 105 testes verdes. SPEC em `0.4.0-draft`. Veja [SPEC.md](SPEC.md), [estado da implementação](#estado-da-implementação) e [roadmap](#roadmap).
+**Status:** 🟢 M1 (walking skeleton) + M2 (confiabilidade) implementados (TypeScript/Node) — happy path end-to-end com GitHub + Claude Code + kairos-forge, heartbeat cooperativo, hardening de PTY e reconstrução de estado; 114 testes verdes. SPEC em `0.4.0-draft`. Veja [SPEC.md](SPEC.md), [estado da implementação](#estado-da-implementação) e [roadmap](#roadmap).
 
 `kairos-symphony` é a camada de orquestração persistente do ecossistema KairOS. Pega os 45 agentes do [`kairos-forge`](https://github.com/VilelaAI/kairos-forge) (ou os agentes regulados do [`kairos-ai`](https://github.com/VilelaAI/kairos-ai)) e os põe pra trabalhar **continuamente** sobre um issue tracker — cada issue pega um agente dedicado, agentes rodam até o trabalho terminar, humano só revisa o resultado.
 
@@ -74,17 +74,17 @@ Um daemon polla seu tracker a cada N segundos, pega issues no estado `ready`, cr
 
 ## Estado da implementação
 
-A SPEC `0.4.0-draft` (18 seções) foi decomposta em 5 milestones de implementação. **M1 está pronto e verde** — happy path end-to-end real, validado por 105 testes (conformidade + integração + unitários) sobre 31 arquivos.
+A SPEC `0.4.0-draft` (18 seções) foi decomposta em 5 milestones de implementação. **M1 e M2 estão prontos e verdes** — happy path end-to-end real + camada de confiabilidade, validados por 114 testes (conformidade + integração + unitários) sobre 32 arquivos.
 
 | Milestone | Cobre | Estado |
 |---|---|---|
 | **M1 — Walking skeleton** | subset de §§2-7, 10, 11 + reconciliação completa §9.1 + observabilidade §13.1 + segurança mínima §12 | ✅ **pronto** |
-| M2 — Confiabilidade | heartbeat cooperativo, cenários de reconciliação avançados, hardening do PTY | 🔜 próximo |
-| M3 — Segurança & observabilidade | `/healthz`, `/metrics` Prometheus, audit log, sandbox forte | ⏳ planejado |
+| **M2 — Confiabilidade** | heartbeat cooperativo (§8.1), hardening do PTY (§4.1), reconstrução de estado interno perdido (§9.1) | ✅ **pronto** |
+| M3 — Segurança & observabilidade | `/healthz`, `/metrics` Prometheus, audit log, sandbox forte | 🔜 próximo |
 | M4 — Harness-readiness | §16 completo (check no startup + re-validação + override) | ⏳ planejado |
 | M5 — Loop autônomo por issue | §17 completo (checkpoint, label `iterate:loop`, max-iterations, adapter per-CLI) | ⏳ planejado |
 
-O que **já roda** no M1:
+O que **já roda** (M1 + M2):
 
 - **Monorepo** pnpm workspaces (`packages/{core,adapter-github,cli-claude-code,factory-kairos-forge,daemon}`), TypeScript Node ≥ 22.5.
 - **Loop principal** poll → reconcile → dispatch → monitor → cleanup, com os 6 estados canônicos da §2.
@@ -93,20 +93,22 @@ O que **já roda** no M1:
 - **Fábrica:** `kairos-forge` — lê personas `.md` do filesystem do plugin para construir o prompt.
 - **Roteamento:** default + label `agent:<id>` + `routing.rules` por tipo de issue.
 - **Workspace:** git worktree isolado por issue, branch própria (nunca push direto na `main`).
-- **Confiabilidade básica:** detecção de stall (sem output no PTY) e crash (exit != 0 / exit 0 sem PR), retry com backoff exponencial (máx 3).
+- **Detecção de stall em dois sinais (M2):** silêncio do PTV **+** heartbeat cooperativo (`.symphony/heartbeat`) — distingue "pensando" de "travado".
+- **Hardening do PTY (M2):** encerramento gracioso SIGTERM→grace→SIGKILL, falha de spawn tratada como crash, captura das últimas linhas para diagnóstico, `kill` idempotente.
+- **Retry** com backoff exponencial (máx 3) em crash/stall/exit-sem-PR.
 - **Persistência:** SQLite (`better-sqlite3`, WAL, schema versionado) — sobrevive a restart do daemon.
-- **Reconciliação:** todos os 6 cenários da §9.1 + `symphony reconcile --dry-run`.
+- **Reconciliação:** todos os 6 cenários da §9.1 — incluindo **reconstrução de estado interno perdido (M2)**: DB apagado/corrompido é reconstruído a partir do tracker + worktrees em disco, sem restart automático (§9). `symphony reconcile --dry-run`.
 - **Observabilidade:** logs JSON line-delimited em PT-BR com redaction de tokens; stream de terminal por agente em `<workspace>/.symphony/terminal.log`.
 - **Config:** YAML + env `SYMPHONY_*` + flags de CLI (precedência: flags > env > YAML), validada com Zod.
 
-Fora do M1 (ver [roadmap](#roadmap)): multi-CLI (Codex, OpenCode), multi-tracker (GitLab, Jira, Linear), webhook receiver, loop autônomo, harness-readiness check.
+Fora do escopo atual (ver [roadmap](#roadmap)): multi-CLI (Codex, OpenCode), multi-tracker (GitLab, Jira, Linear), webhook receiver, loop autônomo, harness-readiness check.
 
 ### Desenvolvimento
 
 ```bash
 pnpm install        # Node ≥ 22.5, pnpm ≥ 11
 pnpm build          # tsc por package
-pnpm test           # 105 testes (vitest)
+pnpm test           # 114 testes (vitest)
 pnpm test:conformance   # só a suíte de conformidade da SPEC
 pnpm lint           # biome
 pnpm typecheck

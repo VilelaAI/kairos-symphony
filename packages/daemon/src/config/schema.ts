@@ -37,6 +37,8 @@ export const ConfigSchema = z.object({
       max_retries: z.number().int().nonnegative().default(3),
       retry_backoff_ms: z.array(z.number().int().positive()).default([60_000, 240_000, 960_000]),
       prompt_max_size_bytes: z.number().int().positive().default(1_048_576),
+      heartbeat_interval_ms: z.number().int().positive().default(30_000),
+      kill_grace_ms: z.number().int().positive().default(5_000),
     })
     .default({} as never),
   storage: z.object({
