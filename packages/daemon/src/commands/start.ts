@@ -1,5 +1,6 @@
 import { defineCommand } from 'citty';
 import { loadConfig } from '../config/loader.js';
+import { ObservabilityServer } from '../observability/server.js';
 import { buildDaemon } from '../wiring.js';
 
 export const startCommand = defineCommand({
@@ -9,7 +10,18 @@ export const startCommand = defineCommand({
   },
   async run({ args }) {
     const cfg = loadConfig({ configPath: args.config, env: process.env, flags: {} });
-    const { daemon, store, log } = buildDaemon(cfg, process.env);
+    const { daemon, store, log, metrics } = buildDaemon(cfg, process.env);
+
+    let obsServer: ObservabilityServer | null = null;
+    if (cfg.observability.metrics.enabled) {
+      obsServer = new ObservabilityServer({
+        host: cfg.observability.metrics.host,
+        port: cfg.observability.metrics.listen_port,
+        registry: metrics,
+        log,
+      });
+      await obsServer.start();
+    }
 
     const shutdown = async (signal: string): Promise<void> => {
       log.info({
@@ -18,6 +30,7 @@ export const startCommand = defineCommand({
         message: `Sinal ${signal} recebido`,
       });
       await daemon.stop();
+      await obsServer?.stop();
       store.close();
       process.exit(0);
     };

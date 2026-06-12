@@ -3,6 +3,7 @@ import { ClaudeCodeCli } from '@kairos-symphony/cli-claude-code';
 import {
   Daemon,
   Logger,
+  MetricsRegistry,
   PromptBuilder,
   Reconciler,
   Router,
@@ -17,6 +18,7 @@ export interface WiredDaemon {
   daemon: Daemon;
   store: SqliteStateStore;
   log: Logger;
+  metrics: MetricsRegistry;
 }
 
 export function buildDaemon(
@@ -42,6 +44,7 @@ export function buildDaemon(
   const store = new SqliteStateStore({ path: cfg.storage.path });
   const log = new Logger({ level: cfg.logging.level });
   const clock = new SystemClock();
+  const metrics = new MetricsRegistry({ issuesInState: () => store.countByState() });
   const wm = new WorkspaceManager({
     root: cfg.workspaces.root,
     baseBranch: cfg.workspaces.base_branch,
@@ -79,6 +82,7 @@ export function buildDaemon(
     router,
     promptBuilder,
     reconciler,
+    metrics,
     pollIntervalMs: cfg.tracker.poll_interval_ms,
     cfg: {
       concurrentLimit: cfg.limits.concurrent_agents,
@@ -88,7 +92,8 @@ export function buildDaemon(
       permissionMode: cfg.cli.permission_mode,
       binaryPath: cfg.cli.binary_path,
       killGraceMs: cfg.limits.kill_grace_ms,
+      redactEnvKeys: [cfg.tracker.token_env],
     },
   });
-  return { daemon, store, log };
+  return { daemon, store, log, metrics };
 }

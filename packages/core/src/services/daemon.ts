@@ -8,6 +8,7 @@ import type { StateStore } from '../ports/store.js';
 import type { TrackerPort } from '../ports/tracker.js';
 import { AgentSupervisor, type SupervisorCfg } from './agent-supervisor.js';
 import type { Logger } from './logger.js';
+import type { MetricsSink } from './metrics.js';
 import { type PromptBuilder, PromptTooLargeError } from './prompt-builder.js';
 import type { Reconciler } from './reconciler.js';
 import type { Router } from './router.js';
@@ -32,6 +33,8 @@ export interface DaemonDeps {
   cfg: DaemonCfg;
   /** Leitor de heartbeat cooperativo (§8.1) repassado aos supervisores. */
   readHeartbeat?: (path: string) => number | null;
+  /** Sink de métricas (§13.2); opcional. */
+  metrics?: MetricsSink;
 }
 
 export class Daemon {
@@ -110,10 +113,12 @@ export class Daemon {
       log: this.deps.log,
       cfg: this.deps.cfg,
       readHeartbeat: this.deps.readHeartbeat,
+      metrics: this.deps.metrics,
       onDone: (id) => this.removeSupervisor(id),
     });
     this.supervisors.set(issue.id, sup);
     sup.start();
+    this.deps.metrics?.recordDispatch();
     this.deps.log.info({
       event: 'issue_dispatched',
       issue_id: issue.id,

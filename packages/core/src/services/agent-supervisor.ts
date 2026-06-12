@@ -7,6 +7,7 @@ import type { Clock, TimerHandle } from '../ports/clock.js';
 import type { StateStore } from '../ports/store.js';
 import type { TrackerPort } from '../ports/tracker.js';
 import type { Logger } from './logger.js';
+import type { MetricsSink } from './metrics.js';
 
 export type SupervisorState =
   | 'idle'
@@ -26,6 +27,8 @@ export interface SupervisorCfg {
   exitNoPrGraceMs?: number; // default 30_000
   /** Janela (ms) entre SIGTERM e SIGKILL ao encerrar um processo (§4.1). Default 5_000. */
   killGraceMs?: number;
+  /** Nomes de env vars a não vazar para o agente (§12) — ex.: token do tracker. */
+  redactEnvKeys?: string[];
 }
 
 /** Quantas linhas de output recente preservar para diagnóstico (§8.2). */
@@ -50,6 +53,8 @@ export interface SupervisorDeps {
    * Injetável para testes determinísticos com clock falso.
    */
   readHeartbeat?: ((path: string) => number | null) | undefined;
+  /** Sink de métricas (§13.2); opcional. */
+  metrics?: MetricsSink | undefined;
 }
 
 export class AgentSupervisor {
@@ -63,6 +68,7 @@ export class AgentSupervisor {
   private exited = false;
   private recentLines: string[] = [];
   private pendingLine = '';
+  private firstStartedAtMs: number | null = null;
 
   constructor(private readonly deps: SupervisorDeps) {}
 
@@ -74,6 +80,7 @@ export class AgentSupervisor {
     this.state = 'spawning';
     this.retryCount += 1;
     const startedAt = this.deps.clock.now().toISOString();
+    if (this.firstStartedAtMs === null) this.firstStartedAtMs = this.deps.clock.now().getTime();
     this.dispatchId = this.deps.store.recordDispatch({
       issueId: this.deps.issue.id,
       agentId: this.deps.agent.id,
@@ -98,6 +105,7 @@ export class AgentSupervisor {
         cwd: this.deps.workspace.path,
         prompt: this.deps.prompt,
         permissionMode: this.deps.cfg.permissionMode,
+        redactEnvKeys: this.deps.cfg.redactEnvKeys,
       });
     } catch (err) {
       // §4.1: falha de spawn do PTY conta como crash da issue, não derruba o daemon.
@@ -112,6 +120,7 @@ export class AgentSupervisor {
           err instanceof Error ? err.message : String(err)
         }`,
       });
+      this.deps.metrics?.recordCrash(this.deps.agent.id);
       this.markDispatchOutcome('crashed', null);
       this.scheduleRetry();
       return;
@@ -242,8 +251,16 @@ export class AgentSupervisor {
       `PR #${pr.number}`,
     );
     this.markDispatchOutcome('pr_opened', 0);
+    this.observeDuration();
     this.state = 'done';
     this.deps.onDone?.(this.deps.issue.id);
+  }
+
+  /** Observa a duração total do dispatch (do 1º start ao estado terminal) — §13.2. */
+  private observeDuration(): void {
+    if (this.firstStartedAtMs === null) return;
+    const seconds = (this.deps.clock.now().getTime() - this.firstStartedAtMs) / 1000;
+    this.deps.metrics?.observeDispatchDuration(seconds);
   }
 
   private scheduleRetry(): void {
@@ -271,6 +288,7 @@ export class AgentSupervisor {
 
   private markBlocked(reason: string): void {
     this.state = 'blocked';
+    this.observeDuration();
     const now = this.deps.clock.now().toISOString();
     const existing = this.deps.store.getIssue(this.deps.issue.id);
     if (existing) {
@@ -335,6 +353,7 @@ export class AgentSupervisor {
         last_output: this.tailDiagnostics(),
         message: `Agente ${this.deps.agent.id} crashou (exit ${code})`,
       });
+      this.deps.metrics?.recordCrash(this.deps.agent.id);
       this.markDispatchOutcome('crashed', code);
       this.scheduleRetry();
       return;

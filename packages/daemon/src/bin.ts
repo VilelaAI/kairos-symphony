@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { defineCommand, runMain } from 'citty';
 import { attachCommand } from './commands/attach.js';
+import { auditCommand } from './commands/audit.js';
 import { psCommand } from './commands/ps.js';
 import { reconcileCommand } from './commands/reconcile.js';
 import { startCommand } from './commands/start.js';
@@ -12,6 +13,7 @@ const main = defineCommand({
     reconcile: reconcileCommand,
     ps: psCommand,
     attach: attachCommand,
+    audit: auditCommand,
   },
 });
 

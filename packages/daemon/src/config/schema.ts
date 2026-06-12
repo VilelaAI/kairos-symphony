@@ -53,6 +53,17 @@ export const ConfigSchema = z.object({
       language: z.enum(['pt-BR', 'en']).default('pt-BR'),
     })
     .default({} as never),
+  observability: z
+    .object({
+      metrics: z
+        .object({
+          enabled: z.boolean().default(false),
+          host: z.string().default('127.0.0.1'),
+          listen_port: z.number().int().positive().default(9464),
+        })
+        .default({} as never),
+    })
+    .default({} as never),
 });
 
 export type SymphonyConfig = z.infer<typeof ConfigSchema>;

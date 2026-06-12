@@ -7,6 +7,17 @@ Versionamento segue [Semantic Versioning](https://semver.org/lang/pt-BR/).
 
 ## [Unreleased]
 
+### Adicionado — M3 Segurança & Observabilidade
+
+Terceiro milestone. Implementa os requisitos de §13.2 (endpoints e métricas) e a camada de sandbox de §12, mantendo a suíte verde (**131 testes** em 36 arquivos).
+
+- **Endpoints `/healthz` e `/metrics` (§13.2).** Servidor HTTP local-first opcional (módulo `http` nativo — sem dependências novas), bind em `127.0.0.1` por default. Habilitado via `observability.metrics.enabled`.
+- **Métricas Prometheus (§13.2).** `MetricsRegistry` (no core, sem deps) que renderiza no formato de exposição Prometheus, com as séries mínimas exigidas: `symphony_issues_in_state{state}` (gauge), `symphony_dispatches_total` (counter), `symphony_crashes_total{agent}` (counter) e `symphony_dispatch_duration_seconds` (histogram). Daemon e supervisor instrumentam dispatch, crash e duração.
+- **Audit log exportável (§13.2).** O histórico de transições (já persistido em SQLite) ganha consulta `listTransitions(issueId?)` e um comando `symphony audit [--issue <id>] [--format json|csv]`.
+- **Sandbox de ambiente do agente (§12).** O processo do agente deixa de herdar o token do tracker e variáveis que aparentam segredo (`sanitizeAgentEnv`); cada adapter de CLI declara as credenciais que precisa preservar via allowlist (ex.: `ANTHROPIC_API_KEY` no Claude Code). Isolamento de SO mais forte (cgroups/namespaces/container) permanece responsabilidade da unidade de deploy no modelo local-first (§1.1).
+- **Config:** nova seção `observability.metrics` (`enabled`, `host`, `listen_port`).
+- **CLI:** novo subcomando `audit`.
+
 ### Adicionado — M2 Confiabilidade
 
 Segundo milestone de implementação. Fecha os três pontos de confiabilidade que o M1 deixou em aberto, mantendo a suíte verde (**114 testes** em 32 arquivos).

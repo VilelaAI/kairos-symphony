@@ -6,6 +6,12 @@ export interface SpawnOpts {
   env?: Record<string, string>;
   ptyCols?: number;
   ptyRows?: number;
+  /**
+   * Nomes de variáveis de ambiente que NÃO devem ser herdadas pelo processo do
+   * agente (§12) — ex.: o token do tracker. Somado aos padrões de segredo do
+   * sandbox de env.
+   */
+  redactEnvKeys?: string[] | undefined;
 }
 
 export interface AgentProcess {

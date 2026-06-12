@@ -133,6 +133,39 @@ export class SqliteStateStore implements StateStore {
       .run(outcome, exitCode, endedAt, dispatchId);
   }
 
+  /** Contagem de issues por estado — fonte do gauge `symphony_issues_in_state` (§13.2). */
+  countByState(): Record<string, number> {
+    const rows = this.db
+      .prepare('SELECT state, COUNT(*) AS n FROM issues GROUP BY state')
+      .all() as Array<{ state: string; n: number }>;
+    const out: Record<string, number> = {};
+    for (const row of rows) out[row.state] = row.n;
+    return out;
+  }
+
+  /**
+   * Histórico de transições (append-only), opcionalmente filtrado por issue —
+   * fonte do audit log exportável (§13.2).
+   */
+  listTransitions(issueId?: IssueId): Transition[] {
+    const rows = (
+      issueId
+        ? this.db
+            .prepare('SELECT * FROM transitions WHERE issue_id = ? ORDER BY occurred_at, id')
+            .all(issueId)
+        : this.db.prepare('SELECT * FROM transitions ORDER BY occurred_at, id').all()
+    ) as Record<string, unknown>[];
+    return rows.map((row) => ({
+      issueId: row.issue_id as string,
+      fromState: (row.from_state as Transition['fromState']) ?? null,
+      toState: row.to_state as Transition['toState'],
+      reason: row.reason as string,
+      evidence: (row.evidence as string | null) ?? null,
+      correlationId: row.correlation_id as string,
+      occurredAt: row.occurred_at as string,
+    }));
+  }
+
   close(): void {
     this.db.close();
   }
