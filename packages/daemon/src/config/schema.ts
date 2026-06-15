@@ -73,6 +73,23 @@ export const ConfigSchema = z.object({
       revalidate_every_hours: z.number().nonnegative().default(24),
     })
     .default({} as never),
+  iteration: z
+    .object({
+      default_mode: z.enum(['single', 'loop']).default('single'),
+      default_max_iterations: z.number().int().positive().default(10),
+      default_completion_promise: z.string().min(1).default('DONE'),
+      loop_warning_threshold_ms: z.number().int().positive().default(14_400_000),
+      per_label_overrides: z
+        .array(
+          z.object({
+            label: z.string().min(1),
+            mode: z.enum(['single', 'loop']),
+            max_iterations: z.number().int().positive().optional(),
+          }),
+        )
+        .default([]),
+    })
+    .default({} as never),
 });
 
 export type SymphonyConfig = z.infer<typeof ConfigSchema>;

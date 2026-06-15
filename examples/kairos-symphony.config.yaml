@@ -133,6 +133,26 @@ harness:
   revalidate_every_hours: 24            # ...ou a cada N horas; degradou → modo drain
 
 # ─────────────────────────────────────────────────────────────────────
+# Iteração (§17) — single-shot (default) ou loop autônomo por issue
+# Precedência: frontmatter da issue > label iterate:* > per_label_overrides > default
+# ─────────────────────────────────────────────────────────────────────
+iteration:
+  default_mode: single                  # single | loop
+  default_max_iterations: 10
+  default_completion_promise: "DONE"    # última linha do checkpoint que conclui o loop
+  loop_warning_threshold_ms: 14400000   # 4h — avisa se um loop ocupa slot por mais que isso
+  per_label_overrides:
+    - label: migration
+      mode: loop
+      max_iterations: 30
+    - label: refactor-large
+      mode: loop
+      max_iterations: 20
+    - label: bug-fix-complex
+      mode: loop
+      max_iterations: 15
+
+# ─────────────────────────────────────────────────────────────────────
 # PRO (proprietário, comentado)
 # ─────────────────────────────────────────────────────────────────────
 # pro:

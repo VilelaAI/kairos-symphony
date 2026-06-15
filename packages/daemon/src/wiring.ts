@@ -87,6 +87,17 @@ export function buildDaemon(
     promptBuilder,
     reconciler,
     metrics,
+    iteration: {
+      defaultMode: cfg.iteration.default_mode,
+      defaultMaxIterations: cfg.iteration.default_max_iterations,
+      defaultCompletionPromise: cfg.iteration.default_completion_promise,
+      loopWarningThresholdMs: cfg.iteration.loop_warning_threshold_ms,
+      perLabelOverrides: cfg.iteration.per_label_overrides.map((o) => ({
+        label: o.label,
+        mode: o.mode,
+        ...(o.max_iterations !== undefined ? { maxIterations: o.max_iterations } : {}),
+      })),
+    },
     harness: cfg.harness.enabled
       ? {
           validator: harnessValidator,

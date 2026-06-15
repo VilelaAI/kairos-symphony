@@ -1,4 +1,12 @@
-import { appendFileSync, existsSync, statSync, writeFileSync } from 'node:fs';
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
+import { dirname, join } from 'node:path';
 import type { AgentDescriptor } from '../domain/agent.js';
 import type { Issue, IssueId } from '../domain/issue.js';
 import type { WorkspaceInfo } from '../domain/workspace.js';
@@ -34,6 +42,14 @@ export interface SupervisorCfg {
 /** Quantas linhas de output recente preservar para diagnóstico (§8.2). */
 const DIAGNOSTIC_TAIL_LINES = 50;
 
+/** Runtime de loop autônomo por issue (§17). Presença = modo loop. */
+export interface LoopRuntime {
+  maxIterations: number;
+  completionPromise: string;
+  validationCommand?: string;
+  warningThresholdMs: number;
+}
+
 export interface SupervisorDeps {
   issue: Issue;
   agent: AgentDescriptor;
@@ -55,6 +71,8 @@ export interface SupervisorDeps {
   readHeartbeat?: ((path: string) => number | null) | undefined;
   /** Sink de métricas (§13.2); opcional. */
   metrics?: MetricsSink | undefined;
+  /** Runtime de loop autônomo (§17); ausente = single-shot. */
+  loop?: LoopRuntime | undefined;
 }
 
 export class AgentSupervisor {
@@ -69,6 +87,9 @@ export class AgentSupervisor {
   private recentLines: string[] = [];
   private pendingLine = '';
   private firstStartedAtMs: number | null = null;
+  private iteration = 0;
+  private loopWarned = false;
+  private stopping = false;
 
   constructor(private readonly deps: SupervisorDeps) {}
 
@@ -76,15 +97,30 @@ export class AgentSupervisor {
     return this.deps.issue.id;
   }
 
+  private get loopMode(): boolean {
+    return this.deps.loop !== undefined;
+  }
+
   start(): void {
     this.state = 'spawning';
-    this.retryCount += 1;
     const startedAt = this.deps.clock.now().toISOString();
     if (this.firstStartedAtMs === null) this.firstStartedAtMs = this.deps.clock.now().getTime();
+    let prompt: string;
+    let attempt: number;
+    if (this.loopMode) {
+      if (this.iteration === 0) this.initCheckpoint();
+      this.iteration += 1;
+      attempt = this.iteration;
+      prompt = this.buildIterationPrompt();
+    } else {
+      this.retryCount += 1;
+      attempt = this.retryCount;
+      prompt = this.deps.prompt;
+    }
     this.dispatchId = this.deps.store.recordDispatch({
       issueId: this.deps.issue.id,
       agentId: this.deps.agent.id,
-      attempt: this.retryCount,
+      attempt,
       startedAt,
       endedAt: null,
       exitCode: null,
@@ -103,7 +139,7 @@ export class AgentSupervisor {
       this.proc = this.deps.cli.spawn({
         binaryPath: this.deps.cfg.binaryPath,
         cwd: this.deps.workspace.path,
-        prompt: this.deps.prompt,
+        prompt,
         permissionMode: this.deps.cfg.permissionMode,
         redactEnvKeys: this.deps.cfg.redactEnvKeys,
       });
@@ -148,6 +184,7 @@ export class AgentSupervisor {
     if (this.state === 'done' || this.state === 'blocked' || this.state === 'terminating') {
       return;
     }
+    this.stopping = true; // §17: encerra o loop em vez de iniciar nova iteração
     this.state = 'terminating';
     this.killWithEscalation();
     if (this.retryHandle !== null) {
@@ -203,6 +240,7 @@ export class AgentSupervisor {
 
   async tick(): Promise<void> {
     if (this.state !== 'running') return;
+    this.maybeWarnLongLoop();
     // §8.1: vivo = teve output no PTY OU atualizou o heartbeat cooperativo.
     // Só consideramos stall quando ambos os sinais estão silenciosos.
     const liveness = Math.max(this.lastOutputAt, this.lastHeartbeatAt());
@@ -211,10 +249,29 @@ export class AgentSupervisor {
       this.onStall();
       return;
     }
+    // §17.3: em loop, a conclusão é sinalizada pelo checkpoint (não por PR);
+    // a detecção de PR é o caminho single-shot (§7).
+    if (this.loopMode) return;
     const pr = await this.deps.tracker.detectLinkedPR(this.deps.issue.id);
     if (pr) {
       await this.onPRDetected(pr);
     }
+  }
+
+  /** §17.5: alerta quando um loop ocupa o slot por tempo demais. */
+  private maybeWarnLongLoop(): void {
+    if (!this.loopMode || this.loopWarned || this.firstStartedAtMs === null) return;
+    const elapsed = this.deps.clock.now().getTime() - this.firstStartedAtMs;
+    if (elapsed <= (this.deps.loop?.warningThresholdMs ?? Number.POSITIVE_INFINITY)) return;
+    this.loopWarned = true;
+    this.deps.log.warn({
+      event: 'loop_long_running',
+      issue_id: this.deps.issue.id,
+      iteration: this.iteration,
+      elapsed_ms: elapsed,
+      correlation_id: this.deps.correlationId,
+      message: `Loop da issue ${this.deps.issue.id} ocupa slot há ${Math.round(elapsed / 3_600_000)}h (iteração ${this.iteration})`,
+    });
   }
 
   private lastHeartbeatAt(): number {
@@ -231,9 +288,14 @@ export class AgentSupervisor {
       last_output: this.tailDiagnostics(),
       message: `Agente ${this.deps.agent.id} stall detectado para issue ${this.deps.issue.id}`,
     });
+    this.markDispatchOutcome('stalled', null);
+    if (this.loopMode) {
+      // O kill dispara onExit → onIterationEnd avalia o checkpoint da iteração.
+      this.killWithEscalation();
+      return;
+    }
     this.state = 'terminating';
     this.killWithEscalation();
-    this.markDispatchOutcome('stalled', null);
     this.scheduleRetry();
   }
 
@@ -339,6 +401,15 @@ export class AgentSupervisor {
       this.deps.clock.clearTimeout(this.killTimer);
       this.killTimer = null;
     }
+    if (this.loopMode) {
+      this.markDispatchOutcome(code === 0 ? 'exited_no_pr' : 'crashed', code);
+      if (this.stopping) {
+        this.state = 'terminating';
+        return;
+      }
+      await this.onIterationEnd();
+      return;
+    }
     if (this.state === 'terminating') {
       // já tratado (stall→kill ou cleanup externo)
       return;
@@ -372,6 +443,156 @@ export class AgentSupervisor {
     });
     this.markDispatchOutcome('exited_no_pr', 0);
     this.scheduleRetry();
+  }
+
+  // ── Loop autônomo (§17) ────────────────────────────────────────────────
+
+  private checkpointPath(): string {
+    return join(this.deps.workspace.path, '.perseguir', 'checkpoint.md');
+  }
+
+  /** §17.3.1: cria o checkpoint antes da primeira iteração. */
+  private initCheckpoint(): void {
+    const path = this.checkpointPath();
+    mkdirSync(dirname(path), { recursive: true });
+    const promise = this.deps.loop?.completionPromise ?? 'DONE';
+    writeFileSync(
+      path,
+      [
+        `# Checkpoint — ${this.deps.issue.id}`,
+        '',
+        'Registre aqui o progresso entre iterações. A última linha sinaliza o estado:',
+        `- \`${promise}\` quando o trabalho estiver completo e verificado;`,
+        '- `BLOCKED: <motivo>` se você travar;',
+        '- qualquer outra coisa → o orquestrador fará a próxima iteração.',
+        '',
+        '## Progresso',
+        '',
+      ].join('\n'),
+    );
+  }
+
+  private readCheckpoint(): string {
+    const path = this.checkpointPath();
+    if (!existsSync(path)) return '';
+    try {
+      return readFileSync(path, 'utf8');
+    } catch {
+      return '';
+    }
+  }
+
+  private readCheckpointLastLine(): string | null {
+    const lines = this.readCheckpoint()
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter((l) => l.length > 0);
+    return lines.length > 0 ? (lines[lines.length - 1] ?? null) : null;
+  }
+
+  private buildIterationPrompt(): string {
+    const loop = this.deps.loop;
+    if (!loop) return this.deps.prompt;
+    const checkpoint = this.readCheckpoint();
+    const parts = [
+      this.deps.prompt,
+      '',
+      '# Loop autônomo — perseguir até o critério (§17)',
+      '',
+      `Iteração ${this.iteration} de ${loop.maxIterations}.`,
+      '',
+      '## Checkpoint atual (`.perseguir/checkpoint.md`)',
+      '',
+      checkpoint.trim().length > 0 ? checkpoint : '(vazio — primeira iteração)',
+      '',
+    ];
+    if (loop.validationCommand) {
+      parts.push(
+        '## Comando de validação',
+        '',
+        `Rode \`${loop.validationCommand}\` para verificar o critério antes de declarar conclusão.`,
+        '',
+      );
+    }
+    parts.push(
+      '## Condição de parada',
+      '',
+      `- Quando o trabalho estiver completo e verificado, escreva \`${loop.completionPromise}\` como ÚLTIMA linha de \`.perseguir/checkpoint.md\`.`,
+      '- Se travar, escreva `BLOCKED: <motivo>` como última linha.',
+      '- Caso contrário, registre o progresso no checkpoint; o orquestrador fará a próxima iteração.',
+      '',
+    );
+    return parts.join('\n');
+  }
+
+  private async onIterationEnd(): Promise<void> {
+    const loop = this.deps.loop;
+    if (!loop) return;
+    const last = this.readCheckpointLastLine();
+
+    if (
+      last !== null &&
+      last.trim().toUpperCase() === loop.completionPromise.trim().toUpperCase()
+    ) {
+      await this.completeLoop();
+      return;
+    }
+
+    const blocked = /^BLOCKED:\s*(.*)$/i.exec(last ?? '');
+    if (blocked) {
+      const motivo = (blocked[1] ?? '').trim() || 'sem motivo informado';
+      this.deps.log.warn({
+        event: 'loop_blocked',
+        issue_id: this.deps.issue.id,
+        iteration: this.iteration,
+        correlation_id: this.deps.correlationId,
+        message: `Loop da issue ${this.deps.issue.id} bloqueado pelo agente: ${motivo}`,
+      });
+      this.markBlocked(`symphony:loop-blocked: ${motivo}`);
+      return;
+    }
+
+    if (this.iteration >= loop.maxIterations) {
+      this.deps.log.warn({
+        event: 'loop_max_iterations',
+        issue_id: this.deps.issue.id,
+        iteration: this.iteration,
+        correlation_id: this.deps.correlationId,
+        last_output: this.readCheckpointLastLine() ?? '',
+        message: `Loop da issue ${this.deps.issue.id} esgotou ${loop.maxIterations} iterações`,
+      });
+      this.markBlocked('symphony:max-iterations-exceeded');
+      return;
+    }
+
+    this.deps.log.info({
+      event: 'loop_iteration_completed',
+      issue_id: this.deps.issue.id,
+      iteration: this.iteration,
+      correlation_id: this.deps.correlationId,
+      message: `Iteração ${this.iteration} concluída sem critério atingido — próxima iteração`,
+    });
+    this.start();
+  }
+
+  private async completeLoop(): Promise<void> {
+    const pr = await this.deps.tracker.detectLinkedPR(this.deps.issue.id).catch(() => null);
+    const reason = pr
+      ? `PR #${pr.number} (loop completo em ${this.iteration} iterações)`
+      : `loop completo em ${this.iteration} iterações`;
+    this.deps.log.info({
+      event: 'loop_completed',
+      issue_id: this.deps.issue.id,
+      iteration: this.iteration,
+      pr_number: pr?.number,
+      correlation_id: this.deps.correlationId,
+      message: `Loop da issue ${this.deps.issue.id} concluído (${this.iteration} iterações)`,
+    });
+    await this.deps.tracker.transitionState(this.deps.issue.id, 'review_pending', reason);
+    this.markDispatchOutcome('pr_opened', 0);
+    this.observeDuration();
+    this.state = 'done';
+    this.deps.onDone?.(this.deps.issue.id);
   }
 }
 

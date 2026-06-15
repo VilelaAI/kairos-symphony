@@ -3,7 +3,7 @@
 > Orquestrador always-on de coding agents para projetos de software.
 > Issue tracker como state machine. Multi-tracker, multi-CLI, PT-BR oficial.
 
-**Status:** 🟢 M1-M4 implementados (TypeScript/Node) — happy path end-to-end com GitHub + Claude Code + kairos-forge, heartbeat cooperativo, hardening de PTY, reconstrução de estado, `/metrics` Prometheus + `/healthz`, audit log, sandbox de env e gate de harness-readiness; 145 testes verdes. SPEC em `0.4.0-draft`. Veja [SPEC.md](SPEC.md), [estado da implementação](#estado-da-implementação) e [roadmap](#roadmap).
+**Status:** 🟢 M1-M5 implementados (TypeScript/Node) — **conformidade v0.3 da SPEC fechada**: happy path end-to-end com GitHub + Claude Code + kairos-forge, heartbeat cooperativo, hardening de PTY, reconstrução de estado, `/metrics` Prometheus + `/healthz`, audit log, sandbox de env, gate de harness-readiness e loop autônomo por issue; 161 testes verdes. SPEC em `0.4.0-draft`. Veja [SPEC.md](SPEC.md), [estado da implementação](#estado-da-implementação) e [roadmap](#roadmap).
 
 `kairos-symphony` é a camada de orquestração persistente do ecossistema KairOS. Pega os 45 agentes do [`kairos-forge`](https://github.com/VilelaAI/kairos-forge) (ou os agentes regulados do [`kairos-ai`](https://github.com/VilelaAI/kairos-ai)) e os põe pra trabalhar **continuamente** sobre um issue tracker — cada issue pega um agente dedicado, agentes rodam até o trabalho terminar, humano só revisa o resultado.
 
@@ -74,7 +74,7 @@ Um daemon polla seu tracker a cada N segundos, pega issues no estado `ready`, cr
 
 ## Estado da implementação
 
-A SPEC `0.4.0-draft` (18 seções) foi decomposta em 5 milestones de implementação. **M1-M4 estão prontos e verdes** — happy path end-to-end + confiabilidade + segurança/observabilidade + harness-readiness, validados por 145 testes (conformidade + integração + unitários) sobre 38 arquivos.
+A SPEC `0.4.0-draft` (18 seções) foi decomposta em 5 milestones de implementação. **Os 5 estão prontos e verdes** — a implementação fecha a conformidade v0.3 da SPEC, validada por 161 testes (conformidade + integração + unitários) sobre 40 arquivos.
 
 | Milestone | Cobre | Estado |
 |---|---|---|
@@ -82,9 +82,9 @@ A SPEC `0.4.0-draft` (18 seções) foi decomposta em 5 milestones de implementa�
 | **M2 — Confiabilidade** | heartbeat cooperativo (§8.1), hardening do PTY (§4.1), reconstrução de estado interno perdido (§9.1) | ✅ **pronto** |
 | **M3 — Segurança & observabilidade** | `/healthz` + `/metrics` Prometheus, audit log exportável (§13.2), sandbox de env do agente (§12) | ✅ **pronto** |
 | **M4 — Harness-readiness** | §16 completo (check no startup, modo validation-only/refuse, `--skip-harness-check`, re-validação → drain) | ✅ **pronto** |
-| M5 — Loop autônomo por issue | §17 completo (checkpoint, label `iterate:loop`, max-iterations, adapter per-CLI) | 🔜 próximo |
+| **M5 — Loop autônomo por issue** | §17 completo (checkpoint, label `iterate:loop[:N]`, frontmatter, stopping conditions, max-iterations, 1 slot) | ✅ **pronto** |
 
-O que **já roda** (M1 + M2 + M3 + M4):
+O que **já roda** (M1-M5):
 
 - **Monorepo** pnpm workspaces (`packages/{core,adapter-github,cli-claude-code,factory-kairos-forge,daemon}`), TypeScript Node ≥ 22.5.
 - **Loop principal** poll → reconcile → dispatch → monitor → cleanup, com os 6 estados canônicos da §2.
@@ -103,16 +103,17 @@ O que **já roda** (M1 + M2 + M3 + M4):
 - **Audit log (M3):** histórico completo de transições em SQLite, exportável via `symphony audit [--issue <id>] [--format json|csv]`.
 - **Sandbox de env (M3, §12):** o processo do agente não herda o token do tracker nem segredos do daemon; credenciais do próprio CLI passam por allowlist.
 - **Harness-readiness (M4, §16):** gate no startup que valida 4 sinais no repo alvo (AGENTS.md/CLAUDE.md, ADRs, hook de pre-commit ou CI, `.gitignore`). Em repo não-pronto: diagnóstico + remediação e `refuse` (exit≠0) ou `validation_only` (sem dispatch); flag `--skip-harness-check` (modo unsafe, com warning por dispatch); re-validação periódica → modo drain.
+- **Loop autônomo por issue (M5, §17):** issues em `iterate:loop[:N]` (label), config global por label ou frontmatter da descrição rodam iterativamente contra um checkpoint (`.perseguir/checkpoint.md`): `DONE` → `review_pending`, `BLOCKED:` → bloqueia, senão re-itera até `max-iterations`. Conta como **1 slot** durante todo o loop; aviso quando excede o limite de tempo.
 - **Config:** YAML + env `SYMPHONY_*` + flags de CLI (precedência: flags > env > YAML), validada com Zod.
 
-Fora do escopo atual (ver [roadmap](#roadmap)): multi-CLI (Codex, OpenCode), multi-tracker (GitLab, Jira, Linear), webhook receiver, loop autônomo, harness-readiness check.
+Fora do escopo atual (ver [roadmap](#roadmap)): multi-CLI (Codex, OpenCode), multi-tracker (GitLab, Jira, Linear), webhook receiver. O loop usa o mecanismo de re-spawn manual (§17.4 fallback) — integração com mecanismos nativos (ralph-loop, `/goal`) fica para o suporte multi-CLI.
 
 ### Desenvolvimento
 
 ```bash
 pnpm install        # Node ≥ 22.5, pnpm ≥ 11
 pnpm build          # tsc por package
-pnpm test           # 145 testes (vitest)
+pnpm test           # 161 testes (vitest)
 pnpm test:conformance   # só a suíte de conformidade da SPEC
 pnpm lint           # biome
 pnpm typecheck
@@ -142,7 +143,7 @@ Para o roteiro end-to-end ver [docs/M1-DEMO.md](docs/M1-DEMO.md).
 
 ## Roadmap
 
-Abaixo está o roadmap de **capacidades da SPEC** (evolução do contrato). O acompanhamento da **implementação** vai pela tabela de milestones em [Estado da implementação](#estado-da-implementação) — M1-M4 prontos, M5 em seguida.
+Abaixo está o roadmap de **capacidades da SPEC** (evolução do contrato). O acompanhamento da **implementação** vai pela tabela de milestones em [Estado da implementação](#estado-da-implementação) — M1-M5 prontos (conformidade v0.3 fechada); o foco agora é v0.4+ (multi-CLI, multi-tracker).
 
 ### v0.3 — Loop autônomo por issue
 

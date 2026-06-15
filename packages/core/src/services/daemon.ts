@@ -6,8 +6,9 @@ import type { Clock, TimerHandle } from '../ports/clock.js';
 import type { FactoryPort } from '../ports/factory.js';
 import type { StateStore } from '../ports/store.js';
 import type { TrackerPort } from '../ports/tracker.js';
-import { AgentSupervisor, type SupervisorCfg } from './agent-supervisor.js';
+import { AgentSupervisor, type LoopRuntime, type SupervisorCfg } from './agent-supervisor.js';
 import type { HarnessReport } from './harness-validator.js';
+import { type IterationConfig, resolveIterationMode } from './iteration.js';
 import type { Logger } from './logger.js';
 import type { MetricsSink } from './metrics.js';
 import { type PromptBuilder, PromptTooLargeError } from './prompt-builder.js';
@@ -54,6 +55,8 @@ export interface DaemonDeps {
   metrics?: MetricsSink;
   /** Política de harness-readiness (§16); opcional. */
   harness?: DaemonHarnessPolicy | undefined;
+  /** Configuração de iteração (§17); ausente = sempre single-shot. */
+  iteration?: IterationConfig | undefined;
 }
 
 export class Daemon {
@@ -136,6 +139,28 @@ export class Daemon {
       occurredAt: now,
     });
     await this.deps.tracker.transitionState(issue.id, 'in_progress', 'symphony dispatched');
+
+    // §17: resolve modo de iteração; em loop, prepara o runtime do supervisor.
+    let loop: LoopRuntime | undefined;
+    if (this.deps.iteration) {
+      const resolved = resolveIterationMode(issue, this.deps.iteration);
+      if (resolved.mode === 'loop') {
+        loop = {
+          maxIterations: resolved.maxIterations,
+          completionPromise: resolved.completionPromise,
+          warningThresholdMs: this.deps.iteration.loopWarningThresholdMs,
+        };
+        if (resolved.validationCommand) loop.validationCommand = resolved.validationCommand;
+        this.deps.log.info({
+          event: 'loop_started',
+          issue_id: issue.id,
+          max_iterations: resolved.maxIterations,
+          correlation_id: correlationId,
+          message: `Issue ${issue.id} em modo loop (máx ${resolved.maxIterations} iterações)`,
+        });
+      }
+    }
+
     const sup = new AgentSupervisor({
       issue,
       agent,
@@ -150,6 +175,7 @@ export class Daemon {
       cfg: this.deps.cfg,
       readHeartbeat: this.deps.readHeartbeat,
       metrics: this.deps.metrics,
+      loop,
       onDone: (id) => this.removeSupervisor(id),
     });
     this.supervisors.set(issue.id, sup);

@@ -645,3 +645,112 @@ describe('AgentSupervisor — diagnóstico (§8.2)', () => {
     expect(crash?.last_output).toContain('ERRO fatal: boom');
   });
 });
+
+describe('AgentSupervisor — loop autônomo (§17)', () => {
+  const flush = () => new Promise((r) => setImmediate(r));
+
+  function makeLoop(
+    f: ReturnType<typeof makeFixtures>,
+    opts: {
+      maxIterations?: number;
+      completionPromise?: string;
+      logSink?: (l: string) => void;
+    } = {},
+  ) {
+    const cli = new FakeCli();
+    const tracker = new FakeTracker();
+    const clock = new FakeClock();
+    const sup = new AgentSupervisor({
+      issue: f.issue,
+      agent: f.agent,
+      workspace: f.workspace,
+      prompt: 'BASE',
+      correlationId: 'cid',
+      cli,
+      tracker,
+      store: new FakeStore(),
+      clock,
+      log: new Logger({
+        level: opts.logSink ? 'warn' : 'error',
+        write: opts.logSink ?? (() => undefined),
+        now: () => new Date(),
+      }),
+      cfg: baseCfg,
+      loop: {
+        maxIterations: opts.maxIterations ?? 3,
+        completionPromise: opts.completionPromise ?? 'DONE',
+        warningThresholdMs: 4 * 60 * 60 * 1000,
+      },
+    });
+    const checkpoint = join(f.workspace.path, '.perseguir', 'checkpoint.md');
+    return { cli, tracker, clock, sup, checkpoint };
+  }
+
+  it('checkpoint termina com DONE → review_pending', async () => {
+    const f = makeFixtures();
+    const { cli, tracker, sup, checkpoint } = makeLoop(f);
+    sup.start();
+    expect(existsSync(checkpoint)).toBe(true); // §17.3.1 criado antes da 1ª iteração
+    writeFileSync(checkpoint, 'fiz o trabalho\nDONE\n');
+    cli.last().finish(0);
+    await flush();
+    expect(sup.state).toBe('done');
+    expect(tracker.transitions.some((t) => t.to === 'review_pending')).toBe(true);
+  });
+
+  it('sem critério → re-spawna próxima iteração (mesmo slot)', async () => {
+    const f = makeFixtures();
+    const { cli, sup, checkpoint } = makeLoop(f);
+    sup.start();
+    expect(cli.spawned.length).toBe(1);
+    writeFileSync(checkpoint, 'ainda trabalhando...\n');
+    cli.last().finish(0);
+    await flush();
+    expect(cli.spawned.length).toBe(2);
+    expect(sup.state).toBe('running');
+  });
+
+  it('checkpoint BLOCKED → blocked com motivo', async () => {
+    const f = makeFixtures();
+    const { cli, tracker, sup, checkpoint } = makeLoop(f);
+    sup.start();
+    writeFileSync(checkpoint, 'tentei\nBLOCKED: faltou credencial\n');
+    cli.last().finish(0);
+    await flush();
+    expect(sup.state).toBe('blocked');
+    expect(
+      tracker.transitions.some((t) => t.to === 'blocked' && t.reason.includes('loop-blocked')),
+    ).toBe(true);
+  });
+
+  it('esgota max-iterations → blocked com symphony:max-iterations-exceeded', async () => {
+    const f = makeFixtures();
+    const { cli, tracker, sup, checkpoint } = makeLoop(f, { maxIterations: 2 });
+    sup.start(); // iteração 1
+    writeFileSync(checkpoint, 'wip');
+    cli.last().finish(0);
+    await flush(); // → iteração 2
+    expect(cli.spawned.length).toBe(2);
+    writeFileSync(checkpoint, 'wip ainda');
+    cli.last().finish(0);
+    await flush(); // iteração 2 >= max → blocked
+    expect(sup.state).toBe('blocked');
+    expect(
+      tracker.transitions.some(
+        (t) => t.to === 'blocked' && t.reason === 'symphony:max-iterations-exceeded',
+      ),
+    ).toBe(true);
+  });
+
+  it('terminate() encerra o loop sem iniciar nova iteração', async () => {
+    const f = makeFixtures();
+    const { cli, sup, checkpoint } = makeLoop(f);
+    sup.start();
+    sup.terminate();
+    writeFileSync(checkpoint, 'wip'); // mesmo sem DONE, não deve re-spawnar
+    cli.last().finish(143, 'SIGTERM');
+    await flush();
+    expect(cli.spawned.length).toBe(1);
+    expect(['terminating', 'blocked', 'done']).toContain(sup.state);
+  });
+});

@@ -7,6 +7,16 @@ Versionamento segue [Semantic Versioning](https://semver.org/lang/pt-BR/).
 
 ## [Unreleased]
 
+### Adicionado — M5 Loop autônomo por issue
+
+Quinto e último milestone — **fecha a conformidade v0.3 da SPEC** (§17). Suíte verde (**161 testes** em 40 arquivos).
+
+- **Resolução de modo de iteração (§17.2).** `resolveIterationMode` com precedência **frontmatter > label `iterate:*` > per-label override > default global**. Suporta labels `iterate:loop`, `iterate:single`, `iterate:loop:N` e frontmatter YAML (`iterate: {mode, max_iterations, completion_promise, validation_command}`) via parser dedicado sem dependências.
+- **Execução do loop (§17.3).** `AgentSupervisor` ganha modo loop (reusando spawn/PTY/stall/kill/heartbeat): cria `<workspace>/.perseguir/checkpoint.md` antes da 1ª iteração; cada iteração injeta no prompt o checkpoint atual + comando de validação + condição de parada + iteração corrente. Ao fim de cada iteração lê a última linha do checkpoint: `DONE`/completion-promise → `review_pending`; `BLOCKED: <motivo>` → `blocked`; senão re-itera. Esgotar `max_iterations` → `blocked: symphony:max-iterations-exceeded`.
+- **Adaptação por CLI (§17.4).** Implementado o fallback universal (re-spawn manual com checkpoint no prompt), equivalente e válido para qualquer CLI; mecanismos nativos (ralph-loop, `/goal`) ficam para o suporte multi-CLI.
+- **Concorrência (§17.5).** Um loop ocupa **1 slot** por toda a execução (re-spawn dentro do mesmo supervisor); aviso `loop_long_running` quando excede `loop_warning_threshold_ms` (default 4h).
+- **Config:** nova seção `iteration` (`default_mode`, `default_max_iterations`, `default_completion_promise`, `loop_warning_threshold_ms`, `per_label_overrides`).
+
 ### Adicionado — M4 Harness-readiness
 
 Quarto milestone. Implementa o pré-requisito de §16 — Symphony valida que o repositório alvo está harness-ready antes de despachar a primeira issue. Suíte verde (**145 testes** em 38 arquivos).
