@@ -211,11 +211,11 @@ A `mobilizar` continua útil pra trabalho pontual paralelo. `symphony` é pra "a
 
 ## Contribuir
 
-O M1 (walking skeleton) já está implementado; o trabalho agora é avançar pelos milestones M2-M5 sem quebrar a conformidade da SPEC. Antes de abrir um PR:
+Os 5 milestones de implementação estão entregues (conformidade v0.3 da SPEC fechada); o trabalho agora é evoluir para v0.4+ (multi-CLI, multi-tracker) sem quebrar a conformidade. Antes de abrir um PR:
 
 1. Leia [SPEC.md](SPEC.md) — contrato formal em RFC (MUST/SHOULD/MAY). Mudança de comportamento começa pela SPEC.
 2. Veja [docs/decisao-arquitetural.md](docs/decisao-arquitetural.md) — por que Node/TS, por que daemon, por que multi-tracker.
-3. Rode `pnpm install && pnpm build && pnpm test` — a suíte de conformidade (`tests/conformance`) é o guard-rail; mantenha-a verde.
+3. Rode `pnpm install && pnpm build && pnpm test` — a suíte de conformidade (`tests/conformance`) é o guard-rail; mantenha-a verde. Para o fluxo end-to-end real, veja [docs/M1-DEMO.md](docs/M1-DEMO.md).
 4. Para entender o recorte de cada milestone, ver os specs de implementação em [`docs/superpowers/`](docs/superpowers).
 5. Abra issue antes de PR para mudanças arquiteturais — design discussions primeiro.
 
