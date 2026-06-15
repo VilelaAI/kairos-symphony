@@ -3,7 +3,7 @@
 > Orquestrador always-on de coding agents para projetos de software.
 > Issue tracker como state machine. Multi-tracker, multi-CLI, PT-BR oficial.
 
-**Status:** 🟢 M1 (walking skeleton) + M2 (confiabilidade) + M3 (segurança & observabilidade) implementados (TypeScript/Node) — happy path end-to-end com GitHub + Claude Code + kairos-forge, heartbeat cooperativo, hardening de PTY, reconstrução de estado, `/metrics` Prometheus + `/healthz`, audit log e sandbox de env do agente; 131 testes verdes. SPEC em `0.4.0-draft`. Veja [SPEC.md](SPEC.md), [estado da implementação](#estado-da-implementação) e [roadmap](#roadmap).
+**Status:** 🟢 M1-M4 implementados (TypeScript/Node) — happy path end-to-end com GitHub + Claude Code + kairos-forge, heartbeat cooperativo, hardening de PTY, reconstrução de estado, `/metrics` Prometheus + `/healthz`, audit log, sandbox de env e gate de harness-readiness; 145 testes verdes. SPEC em `0.4.0-draft`. Veja [SPEC.md](SPEC.md), [estado da implementação](#estado-da-implementação) e [roadmap](#roadmap).
 
 `kairos-symphony` é a camada de orquestração persistente do ecossistema KairOS. Pega os 45 agentes do [`kairos-forge`](https://github.com/VilelaAI/kairos-forge) (ou os agentes regulados do [`kairos-ai`](https://github.com/VilelaAI/kairos-ai)) e os põe pra trabalhar **continuamente** sobre um issue tracker — cada issue pega um agente dedicado, agentes rodam até o trabalho terminar, humano só revisa o resultado.
 
@@ -74,17 +74,17 @@ Um daemon polla seu tracker a cada N segundos, pega issues no estado `ready`, cr
 
 ## Estado da implementação
 
-A SPEC `0.4.0-draft` (18 seções) foi decomposta em 5 milestones de implementação. **M1, M2 e M3 estão prontos e verdes** — happy path end-to-end + confiabilidade + segurança/observabilidade, validados por 131 testes (conformidade + integração + unitários) sobre 36 arquivos.
+A SPEC `0.4.0-draft` (18 seções) foi decomposta em 5 milestones de implementação. **M1-M4 estão prontos e verdes** — happy path end-to-end + confiabilidade + segurança/observabilidade + harness-readiness, validados por 145 testes (conformidade + integração + unitários) sobre 38 arquivos.
 
 | Milestone | Cobre | Estado |
 |---|---|---|
 | **M1 — Walking skeleton** | subset de §§2-7, 10, 11 + reconciliação completa §9.1 + observabilidade §13.1 + segurança mínima §12 | ✅ **pronto** |
 | **M2 — Confiabilidade** | heartbeat cooperativo (§8.1), hardening do PTY (§4.1), reconstrução de estado interno perdido (§9.1) | ✅ **pronto** |
 | **M3 — Segurança & observabilidade** | `/healthz` + `/metrics` Prometheus, audit log exportável (§13.2), sandbox de env do agente (§12) | ✅ **pronto** |
-| M4 — Harness-readiness | §16 completo (check no startup + re-validação + override) | 🔜 próximo |
-| M5 — Loop autônomo por issue | §17 completo (checkpoint, label `iterate:loop`, max-iterations, adapter per-CLI) | ⏳ planejado |
+| **M4 — Harness-readiness** | §16 completo (check no startup, modo validation-only/refuse, `--skip-harness-check`, re-validação → drain) | ✅ **pronto** |
+| M5 — Loop autônomo por issue | §17 completo (checkpoint, label `iterate:loop`, max-iterations, adapter per-CLI) | 🔜 próximo |
 
-O que **já roda** (M1 + M2 + M3):
+O que **já roda** (M1 + M2 + M3 + M4):
 
 - **Monorepo** pnpm workspaces (`packages/{core,adapter-github,cli-claude-code,factory-kairos-forge,daemon}`), TypeScript Node ≥ 22.5.
 - **Loop principal** poll → reconcile → dispatch → monitor → cleanup, com os 6 estados canônicos da §2.
@@ -102,6 +102,7 @@ O que **já roda** (M1 + M2 + M3):
 - **Métricas & health (M3, §13.2):** servidor HTTP local-first opcional com `/healthz` e `/metrics` no formato Prometheus (`symphony_issues_in_state`, `symphony_dispatches_total`, `symphony_crashes_total`, `symphony_dispatch_duration_seconds`).
 - **Audit log (M3):** histórico completo de transições em SQLite, exportável via `symphony audit [--issue <id>] [--format json|csv]`.
 - **Sandbox de env (M3, §12):** o processo do agente não herda o token do tracker nem segredos do daemon; credenciais do próprio CLI passam por allowlist.
+- **Harness-readiness (M4, §16):** gate no startup que valida 4 sinais no repo alvo (AGENTS.md/CLAUDE.md, ADRs, hook de pre-commit ou CI, `.gitignore`). Em repo não-pronto: diagnóstico + remediação e `refuse` (exit≠0) ou `validation_only` (sem dispatch); flag `--skip-harness-check` (modo unsafe, com warning por dispatch); re-validação periódica → modo drain.
 - **Config:** YAML + env `SYMPHONY_*` + flags de CLI (precedência: flags > env > YAML), validada com Zod.
 
 Fora do escopo atual (ver [roadmap](#roadmap)): multi-CLI (Codex, OpenCode), multi-tracker (GitLab, Jira, Linear), webhook receiver, loop autônomo, harness-readiness check.
@@ -111,7 +112,7 @@ Fora do escopo atual (ver [roadmap](#roadmap)): multi-CLI (Codex, OpenCode), mul
 ```bash
 pnpm install        # Node ≥ 22.5, pnpm ≥ 11
 pnpm build          # tsc por package
-pnpm test           # 131 testes (vitest)
+pnpm test           # 145 testes (vitest)
 pnpm test:conformance   # só a suíte de conformidade da SPEC
 pnpm lint           # biome
 pnpm typecheck
@@ -131,7 +132,7 @@ Subcomandos:
 
 | Comando | Descrição |
 |---|---|
-| `start` | Sobe o daemon (foreground); polling do tracker, dispatch e monitoramento. Com `observability.metrics.enabled`, expõe `/healthz` e `/metrics` |
+| `start [--skip-harness-check]` | Sobe o daemon (foreground); valida harness-readiness (§16), faz polling, dispatch e monitoramento. Com `observability.metrics.enabled`, expõe `/healthz` e `/metrics` |
 | `reconcile [--dry-run]` | Roda uma rodada de reconciliação (§9.1); com `--dry-run`, só lista divergências |
 | `ps` | Lista issues ativas (estado != `done`) lendo o SQLite |
 | `attach <issue_id>` | `tail -f` do terminal.log do agente daquela issue |
@@ -141,7 +142,7 @@ Para o roteiro end-to-end ver [docs/M1-DEMO.md](docs/M1-DEMO.md).
 
 ## Roadmap
 
-Abaixo está o roadmap de **capacidades da SPEC** (evolução do contrato). O acompanhamento da **implementação** vai pela tabela de milestones em [Estado da implementação](#estado-da-implementação) — M1-M3 prontos, M4 em seguida.
+Abaixo está o roadmap de **capacidades da SPEC** (evolução do contrato). O acompanhamento da **implementação** vai pela tabela de milestones em [Estado da implementação](#estado-da-implementação) — M1-M4 prontos, M5 em seguida.
 
 ### v0.3 — Loop autônomo por issue
 

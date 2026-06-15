@@ -1,7 +1,7 @@
 # kairos-symphony — Especificação
 
 **Versão:** 0.4.0-draft
-**Status:** Em desenvolvimento — M1 (walking skeleton), M2 (confiabilidade) e M3 (segurança & observabilidade) implementados em TypeScript; M4-M5 pendentes (ver README → [Estado da implementação](README.md#estado-da-implementação))
+**Status:** Em desenvolvimento — M1 (walking skeleton), M2 (confiabilidade), M3 (segurança & observabilidade) e M4 (harness-readiness) implementados em TypeScript; M5 pendente (ver README → [Estado da implementação](README.md#estado-da-implementação))
 **Licença:** MIT
 
 Esta especificação define o contrato comportamental de um orquestrador de coding agents alimentado por issue tracker. Implementações em qualquer linguagem MUST seguir as regras MUST e SHOULD seguir as regras SHOULD desta spec.

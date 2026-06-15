@@ -123,6 +123,16 @@ security:
   require_human_approval_for_labels: [needs-approval, security-critical]
 
 # ─────────────────────────────────────────────────────────────────────
+# Harness-readiness (§16) — valida que o repo alvo está pronto p/ agentes
+# ─────────────────────────────────────────────────────────────────────
+harness:
+  enabled: true                         # roda o gate no startup
+  skip_check: false                     # true = modo unsafe (== --skip-harness-check)
+  mode_on_failure: refuse               # refuse (exit!=0) | validation_only (sobe sem despachar)
+  revalidate_every_dispatches: 100      # re-valida a cada N dispatches (0 = off)
+  revalidate_every_hours: 24            # ...ou a cada N horas; degradou → modo drain
+
+# ─────────────────────────────────────────────────────────────────────
 # PRO (proprietário, comentado)
 # ─────────────────────────────────────────────────────────────────────
 # pro:

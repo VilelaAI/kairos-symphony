@@ -269,6 +269,156 @@ describe('Daemon.tick', () => {
   });
 });
 
+describe('Daemon — harness-readiness (§16)', () => {
+  function build(opts: {
+    repoPath: string;
+    root: string;
+    ready: Issue[];
+    harness?: {
+      validator: { validate: () => { ready: boolean; checks: never[]; failures: string[] } };
+      skipCheck: boolean;
+      revalidateEveryDispatches: number;
+      revalidateEveryMs: number;
+    };
+    logSink?: (line: string) => void;
+  }): { daemon: Daemon; cli: FakeCli; store: SqliteStateStore } {
+    const cli = new FakeCli();
+    const tracker = new FakeTracker();
+    tracker.ready = opts.ready;
+    const factory = new FakeFactory();
+    const store = new SqliteStateStore({ path: ':memory:' });
+    const log = new Logger({
+      level: opts.logSink ? 'warn' : 'error',
+      write: opts.logSink ?? (() => undefined),
+      now: () => new Date(),
+    });
+    const wm = new WorkspaceManager({
+      root: opts.root,
+      baseBranch: 'main',
+      repoPath: opts.repoPath,
+    });
+    // biome-ignore lint/style/useConst: forward reference for reconciler closure
+    let daemon: Daemon;
+    const reconciler = new Reconciler({
+      tracker,
+      store,
+      log,
+      now: () => new Date(),
+      activeSupervisors: () => daemon.activeSupervisors() as never,
+      cleanupWorkspace: (id) => wm.cleanup(id),
+      listWorkspacesOnDisk: () => wm.listAllOnDisk(),
+    });
+    daemon = new Daemon({
+      tracker,
+      cli,
+      factory,
+      store,
+      log,
+      clock: new FakeClock(),
+      workspaceManager: wm,
+      router: new Router({ defaultAgent: 'default-agent', rules: [] }),
+      promptBuilder: new PromptBuilder({ maxBytes: 1_048_576 }),
+      reconciler,
+      pollIntervalMs: 30_000,
+      harness: opts.harness,
+      cfg: {
+        concurrentLimit: 5,
+        stallTimeoutMs: 600_000,
+        maxRetries: 3,
+        backoffMs: [60_000],
+        permissionMode: 'bypass',
+        binaryPath: '/usr/bin/true',
+      },
+    });
+    return { daemon, cli, store };
+  }
+
+  it('validation-only (pauseDispatch) não despacha issues ready', async () => {
+    const { repoPath, root } = setupRepo();
+    try {
+      const { daemon, cli, store } = build({
+        repoPath,
+        root,
+        ready: [{ id: 'r#1', number: 1, title: 't', body: 'b', labels: [], state: 'ready' }],
+      });
+      daemon.pauseDispatch();
+      await daemon.tick();
+      expect(cli.spawned).toHaveLength(0);
+      expect(daemon.isDispatchPaused()).toBe(true);
+      store.close();
+    } finally {
+      rmSync(repoPath, { recursive: true, force: true });
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('re-validação que falha → drain (para de despachar novas)', async () => {
+    const { repoPath, root } = setupRepo();
+    try {
+      let ready = true;
+      const { daemon, cli, store } = build({
+        repoPath,
+        root,
+        ready: [{ id: 'r#1', number: 1, title: 't', body: 'b', labels: [], state: 'ready' }],
+        harness: {
+          validator: {
+            validate: () => ({ ready, checks: [], failures: ready ? [] : ['degradou'] }),
+          },
+          skipCheck: false,
+          revalidateEveryDispatches: 1,
+          revalidateEveryMs: 0,
+        },
+      });
+      await daemon.tick(); // despacha r#1, dispatchesSinceCheck=1
+      expect(cli.spawned).toHaveLength(1);
+      expect(daemon.isDispatchPaused()).toBe(false);
+
+      ready = false; // harness degrada
+      // nova issue disponível, mas a re-validação deve drenar antes de despachar
+      (daemon as unknown as { deps: { tracker: FakeTracker } }).deps.tracker.ready = [
+        { id: 'r#1', number: 1, title: 't', body: 'b', labels: [], state: 'ready' },
+        { id: 'r#2', number: 2, title: 't', body: 'b', labels: [], state: 'ready' },
+      ];
+      await daemon.tick();
+      expect(daemon.isDispatchPaused()).toBe(true);
+      expect(cli.spawned).toHaveLength(1); // r#2 NÃO foi despachada
+      store.close();
+    } finally {
+      rmSync(repoPath, { recursive: true, force: true });
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('skip-check emite warning conspícuo por dispatch (§16.4)', async () => {
+    const { repoPath, root } = setupRepo();
+    try {
+      const lines: string[] = [];
+      const { daemon, store } = build({
+        repoPath,
+        root,
+        ready: [{ id: 'r#1', number: 1, title: 't', body: 'b', labels: [], state: 'ready' }],
+        harness: {
+          validator: { validate: () => ({ ready: true, checks: [], failures: [] }) },
+          skipCheck: true,
+          revalidateEveryDispatches: 0,
+          revalidateEveryMs: 0,
+        },
+        logSink: (l) => lines.push(l),
+      });
+      await daemon.tick();
+      const bypass = lines
+        .map((l) => JSON.parse(l))
+        .find((e) => e.event === 'harness_check_bypassed');
+      expect(bypass).toBeDefined();
+      expect(bypass.message).toContain('HARNESS CHECK BYPASSED');
+      store.close();
+    } finally {
+      rmSync(repoPath, { recursive: true, force: true });
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('Daemon — graceful shutdown', () => {
   it('stop() chama terminate() em todos os supervisors ativos', async () => {
     const { repoPath, root } = setupRepo();

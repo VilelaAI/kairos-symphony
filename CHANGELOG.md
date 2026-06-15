@@ -7,6 +7,16 @@ Versionamento segue [Semantic Versioning](https://semver.org/lang/pt-BR/).
 
 ## [Unreleased]
 
+### Adicionado — M4 Harness-readiness
+
+Quarto milestone. Implementa o pré-requisito de §16 — Symphony valida que o repositório alvo está harness-ready antes de despachar a primeira issue. Suíte verde (**145 testes** em 38 arquivos).
+
+- **`HarnessValidator` (§16.1/§16.2).** Valida os 4 sinais mínimos no repo alvo (`workspaces.repo_path`), cada um mapeado ao pilar de Harness Engineering: `AGENTS.md`/`CLAUDE.md` (instruction set), ≥1 ADR em `docs/adr/` e similares (repository-as-context), ≥1 hook de pre-commit ou config de CI (invariantes enforçadas) e `.gitignore` (higiene). Acesso ao filesystem injetável (`HarnessFsProbe`) para testes determinísticos.
+- **Gate no startup (§16.2/§16.3).** O comando `start` roda a checagem antes de aceitar a 1ª issue. Em repo não-pronto: loga diagnóstico por pilar + mensagem de remediação (`harnessRemediationMessage`) e, conforme `harness.mode_on_failure`, **recusa o startup** (`refuse`, exit≠0) ou entra em **modo validation-only** (`validation_only`, daemon sobe sem despachar).
+- **Override unsafe (§16.4).** Flag `--skip-harness-check` (ou `harness.skip_check`) força o startup com warning conspícuo `⚠️ HARNESS CHECK BYPASSED` no boot e a cada dispatch.
+- **Re-validação periódica → drain (§16.5).** A cada N dispatches (default 100) ou N horas (default 24), o daemon re-valida; se o harness degradou, entra em **modo drain** (não pega novas issues, deixa as ativas terminarem) e alerta.
+- **Config:** nova seção `harness` (`enabled`, `skip_check`, `mode_on_failure`, `revalidate_every_dispatches`, `revalidate_every_hours`). **CLI:** flag `--skip-harness-check` no `start`.
+
 ### Adicionado — M3 Segurança & Observabilidade
 
 Terceiro milestone. Implementa os requisitos de §13.2 (endpoints e métricas) e a camada de sandbox de §12, mantendo a suíte verde (**131 testes** em 36 arquivos).

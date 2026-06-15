@@ -13,6 +13,7 @@ export * from './ports/clock.js';
 export * from './services/logger.js';
 export * from './services/metrics.js';
 export * from './services/agent-env.js';
+export * from './services/harness-validator.js';
 export * from './services/prompt-builder.js';
 export * from './services/router.js';
 export * from './services/system-clock.js';

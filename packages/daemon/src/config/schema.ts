@@ -64,6 +64,15 @@ export const ConfigSchema = z.object({
         .default({} as never),
     })
     .default({} as never),
+  harness: z
+    .object({
+      enabled: z.boolean().default(true),
+      skip_check: z.boolean().default(false),
+      mode_on_failure: z.enum(['refuse', 'validation_only']).default('refuse'),
+      revalidate_every_dispatches: z.number().int().nonnegative().default(100),
+      revalidate_every_hours: z.number().nonnegative().default(24),
+    })
+    .default({} as never),
 });
 
 export type SymphonyConfig = z.infer<typeof ConfigSchema>;

@@ -2,6 +2,7 @@ import { GithubTracker } from '@kairos-symphony/adapter-github';
 import { ClaudeCodeCli } from '@kairos-symphony/cli-claude-code';
 import {
   Daemon,
+  HarnessValidator,
   Logger,
   MetricsRegistry,
   PromptBuilder,
@@ -10,6 +11,7 @@ import {
   SqliteStateStore,
   SystemClock,
   WorkspaceManager,
+  defaultHarnessProbe,
 } from '@kairos-symphony/core';
 import { KairosForgeFactory, discoverForgeAgentsDir } from '@kairos-symphony/factory-kairos-forge';
 import type { SymphonyConfig } from './config/schema.js';
@@ -19,6 +21,7 @@ export interface WiredDaemon {
   store: SqliteStateStore;
   log: Logger;
   metrics: MetricsRegistry;
+  harnessValidator: HarnessValidator;
 }
 
 export function buildDaemon(
@@ -59,6 +62,7 @@ export function buildDaemon(
     maxBytes: cfg.limits.prompt_max_size_bytes,
     heartbeatIntervalMs: cfg.limits.heartbeat_interval_ms,
   });
+  const harnessValidator = new HarnessValidator(defaultHarnessProbe(cfg.workspaces.repo_path));
   // biome-ignore lint/style/useConst: forward reference — daemon precisa existir antes do Reconciler
   let daemon: Daemon;
   const reconciler = new Reconciler({
@@ -83,6 +87,14 @@ export function buildDaemon(
     promptBuilder,
     reconciler,
     metrics,
+    harness: cfg.harness.enabled
+      ? {
+          validator: harnessValidator,
+          skipCheck: cfg.harness.skip_check,
+          revalidateEveryDispatches: cfg.harness.revalidate_every_dispatches,
+          revalidateEveryMs: Math.round(cfg.harness.revalidate_every_hours * 3_600_000),
+        }
+      : undefined,
     pollIntervalMs: cfg.tracker.poll_interval_ms,
     cfg: {
       concurrentLimit: cfg.limits.concurrent_agents,
@@ -95,5 +107,5 @@ export function buildDaemon(
       redactEnvKeys: [cfg.tracker.token_env],
     },
   });
-  return { daemon, store, log, metrics };
+  return { daemon, store, log, metrics, harnessValidator };
 }
