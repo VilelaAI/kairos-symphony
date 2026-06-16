@@ -7,6 +7,7 @@ import {
   PromptBuilder,
   PromptTooLargeError,
   WorkspaceManager,
+  sanitizeAgentEnv,
 } from '@kairos-symphony/core';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -66,7 +67,24 @@ describe('SPEC §12 — Segurança', () => {
       branchName: 's',
       baseBranch: 'm',
       terminalLogPath: '/w/t',
+      heartbeatPath: '/w/h',
     };
     expect(() => pb.build({ issue, agent, workspace })).toThrow(PromptTooLargeError);
+  });
+
+  it('sandbox de env: agente não herda token do tracker nem segredos (M3)', () => {
+    const env = sanitizeAgentEnv(
+      {
+        PATH: '/usr/bin',
+        HOME: '/home/user',
+        GITHUB_TOKEN: 'ghp_secret',
+        ANTHROPIC_API_KEY: 'sk-secret',
+      },
+      { denyKeys: ['GITHUB_TOKEN'] },
+    );
+    expect(env.PATH).toBe('/usr/bin');
+    expect(env.HOME).toBe('/home/user');
+    expect(env.GITHUB_TOKEN).toBeUndefined();
+    expect(env.ANTHROPIC_API_KEY).toBeUndefined();
   });
 });

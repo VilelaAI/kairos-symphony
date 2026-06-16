@@ -5,6 +5,78 @@ Todas as mudanças notáveis neste projeto serão documentadas aqui.
 Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
 Versionamento segue [Semantic Versioning](https://semver.org/lang/pt-BR/).
 
+## [Unreleased]
+
+### Adicionado — M5 Loop autônomo por issue
+
+Quinto e último milestone — **fecha a conformidade v0.3 da SPEC** (§17). Suíte verde (**161 testes** em 40 arquivos).
+
+- **Resolução de modo de iteração (§17.2).** `resolveIterationMode` com precedência **frontmatter > label `iterate:*` > per-label override > default global**. Suporta labels `iterate:loop`, `iterate:single`, `iterate:loop:N` e frontmatter YAML (`iterate: {mode, max_iterations, completion_promise, validation_command}`) via parser dedicado sem dependências.
+- **Execução do loop (§17.3).** `AgentSupervisor` ganha modo loop (reusando spawn/PTY/stall/kill/heartbeat): cria `<workspace>/.perseguir/checkpoint.md` antes da 1ª iteração; cada iteração injeta no prompt o checkpoint atual + comando de validação + condição de parada + iteração corrente. Ao fim de cada iteração lê a última linha do checkpoint: `DONE`/completion-promise → `review_pending`; `BLOCKED: <motivo>` → `blocked`; senão re-itera. Esgotar `max_iterations` → `blocked: symphony:max-iterations-exceeded`.
+- **Adaptação por CLI (§17.4).** Implementado o fallback universal (re-spawn manual com checkpoint no prompt), equivalente e válido para qualquer CLI; mecanismos nativos (ralph-loop, `/goal`) ficam para o suporte multi-CLI.
+- **Concorrência (§17.5).** Um loop ocupa **1 slot** por toda a execução (re-spawn dentro do mesmo supervisor); aviso `loop_long_running` quando excede `loop_warning_threshold_ms` (default 4h).
+- **Config:** nova seção `iteration` (`default_mode`, `default_max_iterations`, `default_completion_promise`, `loop_warning_threshold_ms`, `per_label_overrides`).
+
+### Adicionado — M4 Harness-readiness
+
+Quarto milestone. Implementa o pré-requisito de §16 — Symphony valida que o repositório alvo está harness-ready antes de despachar a primeira issue. Suíte verde (**145 testes** em 38 arquivos).
+
+- **`HarnessValidator` (§16.1/§16.2).** Valida os 4 sinais mínimos no repo alvo (`workspaces.repo_path`), cada um mapeado ao pilar de Harness Engineering: `AGENTS.md`/`CLAUDE.md` (instruction set), ≥1 ADR em `docs/adr/` e similares (repository-as-context), ≥1 hook de pre-commit ou config de CI (invariantes enforçadas) e `.gitignore` (higiene). Acesso ao filesystem injetável (`HarnessFsProbe`) para testes determinísticos.
+- **Gate no startup (§16.2/§16.3).** O comando `start` roda a checagem antes de aceitar a 1ª issue. Em repo não-pronto: loga diagnóstico por pilar + mensagem de remediação (`harnessRemediationMessage`) e, conforme `harness.mode_on_failure`, **recusa o startup** (`refuse`, exit≠0) ou entra em **modo validation-only** (`validation_only`, daemon sobe sem despachar).
+- **Override unsafe (§16.4).** Flag `--skip-harness-check` (ou `harness.skip_check`) força o startup com warning conspícuo `⚠️ HARNESS CHECK BYPASSED` no boot e a cada dispatch.
+- **Re-validação periódica → drain (§16.5).** A cada N dispatches (default 100) ou N horas (default 24), o daemon re-valida; se o harness degradou, entra em **modo drain** (não pega novas issues, deixa as ativas terminarem) e alerta.
+- **Config:** nova seção `harness` (`enabled`, `skip_check`, `mode_on_failure`, `revalidate_every_dispatches`, `revalidate_every_hours`). **CLI:** flag `--skip-harness-check` no `start`.
+
+### Adicionado — M3 Segurança & Observabilidade
+
+Terceiro milestone. Implementa os requisitos de §13.2 (endpoints e métricas) e a camada de sandbox de §12, mantendo a suíte verde (**131 testes** em 36 arquivos).
+
+- **Endpoints `/healthz` e `/metrics` (§13.2).** Servidor HTTP local-first opcional (módulo `http` nativo — sem dependências novas), bind em `127.0.0.1` por default. Habilitado via `observability.metrics.enabled`.
+- **Métricas Prometheus (§13.2).** `MetricsRegistry` (no core, sem deps) que renderiza no formato de exposição Prometheus, com as séries mínimas exigidas: `symphony_issues_in_state{state}` (gauge), `symphony_dispatches_total` (counter), `symphony_crashes_total{agent}` (counter) e `symphony_dispatch_duration_seconds` (histogram). Daemon e supervisor instrumentam dispatch, crash e duração.
+- **Audit log exportável (§13.2).** O histórico de transições (já persistido em SQLite) ganha consulta `listTransitions(issueId?)` e um comando `symphony audit [--issue <id>] [--format json|csv]`.
+- **Sandbox de ambiente do agente (§12).** O processo do agente deixa de herdar o token do tracker e variáveis que aparentam segredo (`sanitizeAgentEnv`); cada adapter de CLI declara as credenciais que precisa preservar via allowlist (ex.: `ANTHROPIC_API_KEY` no Claude Code). Isolamento de SO mais forte (cgroups/namespaces/container) permanece responsabilidade da unidade de deploy no modelo local-first (§1.1).
+- **Config:** nova seção `observability.metrics` (`enabled`, `host`, `listen_port`).
+- **CLI:** novo subcomando `audit`.
+
+### Adicionado — M2 Confiabilidade
+
+Segundo milestone de implementação. Fecha os três pontos de confiabilidade que o M1 deixou em aberto, mantendo a suíte verde (**114 testes** em 32 arquivos).
+
+- **Heartbeat cooperativo (§8.1).** Além do silêncio do PTY, o supervisor agora considera um arquivo de heartbeat (`<workspace>/.symphony/heartbeat`) que o agente atualiza periodicamente. Um agente "pensando" (sem output, mas atualizando o heartbeat) não é mais morto por engano; o stall só dispara quando **ambos** os sinais ficam silenciosos por mais de `stall_timeout_ms`. O `PromptBuilder` instrui o agente a atualizar o heartbeat; intervalo configurável via `limits.heartbeat_interval_ms`.
+- **Hardening do spawn de PTY (§4.1).**
+  - Encerramento gracioso **SIGTERM → grace → SIGKILL** (`limits.kill_grace_ms`, default 5s) em stall e shutdown, com guarda para não matar um processo de retry recém-spawnado.
+  - Falha ao spawnar o PTY passa a ser tratada como **crash daquela issue** (retry), em vez de derrubar o daemon.
+  - `kill` do adapter Claude Code agora é **idempotente** (não lança `ESRCH` ao matar processo já encerrado).
+  - Captura das **últimas 50 linhas** de output (`last_output`) nos logs de `agent_crashed`/`agent_stalled` para diagnóstico (§8.2).
+- **Reconstrução de estado interno perdido (§9.1, 6º cenário).** Quando o SQLite é apagado/corrompido mas há worktrees em disco, o reconciliador casa cada worktree órfão com uma issue ativa no tracker (`in_progress`/`review_pending`) e **reconstrói** o `IssueRecord`. Como o processo morreu e a §9 proíbe restart automático, a issue reconstruída entra em `blocked: symphony:needs-reconciliation` com o workspace preservado, para retomada explícita pelo operador. Worktrees sem match no tracker continuam apenas logados (política conservadora do M1). Novos eventos `state_reconstructed`/`agent_sigkilled`.
+- **Config:** novos campos `limits.heartbeat_interval_ms` (default 30000) e `limits.kill_grace_ms` (default 5000).
+
+### Adicionado — M1 Walking Skeleton (primeira implementação)
+
+A SPEC `0.4.0-draft` deixou de ser apenas contrato: o **M1 (walking skeleton)** está implementado, com o happy path end-to-end funcionando em hardware real (GitHub + Claude Code + kairos-forge) e coberto por **105 testes** (conformidade + integração + unitários) em 31 arquivos.
+
+- **Monorepo** pnpm workspaces em TypeScript (Node ≥ 22.5) com 5 packages: `core` (domínio + ports + serviços), `adapter-github`, `cli-claude-code`, `factory-kairos-forge` e `daemon`.
+- **Loop principal** poll → reconcile → dispatch → monitor → cleanup sobre os 6 estados canônicos da §2.
+- **Adapter GitHub** (Issues + detecção de PR via `Closes #N` e convenção de branch `symphony/<issue_id>`).
+- **Spawn de CLI** Claude Code via `node-pty` (PTY real, §4.1), com modo de permissão configurável.
+- **Fábrica kairos-forge** lendo personas `.md` do filesystem para construir o prompt (§6).
+- **Roteamento** completo: default + label `agent:<id>` + `routing.rules` por tipo de issue (§5).
+- **Workspace** isolado por git worktree, branch própria — nunca push direto na `main` (§12).
+- **Confiabilidade básica:** detecção de stall e crash + retry com backoff exponencial `[1min, 4min, 16min]`, máx 3 (§7-§8).
+- **Persistência** SQLite (`better-sqlite3`, WAL, schema versionado) que sobrevive a restart do daemon (§9).
+- **Reconciliação** dos 6 cenários da §9.1 + comando `symphony reconcile --dry-run`.
+- **Observabilidade:** logs JSON line-delimited em PT-BR com redaction de tokens (§11) + stream de terminal por agente em `<workspace>/.symphony/terminal.log` (§13.1).
+- **Config** via YAML + env `SYMPHONY_*` + flags de CLI (precedência flags > env > YAML), validada com Zod (§10).
+- **CLI `symphony`** (`packages/daemon`) com 4 subcomandos: `start`, `reconcile [--dry-run]`, `ps`, `attach <issue_id>`.
+- **Suíte de conformidade** `tests/conformance` mapeando SPEC §2-§15 + testes de integração (dispatch, reconcile, restart, stall) com fakes.
+- **CI** GitHub Actions (`.github/workflows/ci.yml`) rodando lint + typecheck + test + conformance em Ubuntu e macOS.
+- **`docs/M1-DEMO.md`** — roteiro manual de 8 passos (DoD humano) provando o end-to-end em ambiente real.
+- Specs e plano de implementação do M1 em `docs/superpowers/`.
+
+### Mudado
+
+- `README.md` e `SPEC.md`: status atualizado de "sem implementação" para "M1 implementado"; README ganhou a seção **Estado da implementação** (milestones M1-M5) e instruções de desenvolvimento; seção "Contribuir" reescrita para o fluxo pós-M1.
+
 ## [0.4.0] — 2026-05-14
 
 Versão resultante de um **reality-check** da SPEC contra a arquitetura do AgentsMesh — um orquestrador de coding agents já em produção (771 commits, 14 releases). O cruzamento expôs furos estruturais que teriam travado a implementação.

@@ -24,6 +24,7 @@ describe('SPEC §6 — Prompt construction', () => {
     branchName: 'symphony/r-1',
     baseBranch: 'main',
     terminalLogPath: '/ws/.symphony/terminal.log',
+    heartbeatPath: '/ws/.symphony/heartbeat',
   };
 
   it('inclui identidade do agente', () => {

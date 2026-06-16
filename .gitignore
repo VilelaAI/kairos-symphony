@@ -11,7 +11,7 @@ state.db-journal
 workspaces/
 logs/
 
-# Node (futura impl)
+# Node
 node_modules/
 npm-debug.log*
 yarn-debug.log*

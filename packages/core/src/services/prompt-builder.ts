@@ -20,6 +20,8 @@ export interface PromptInput {
 
 export interface PromptBuilderOpts {
   maxBytes: number;
+  /** Intervalo sugerido (ms) entre atualizações de heartbeat pelo agente (§8.1). */
+  heartbeatIntervalMs?: number;
 }
 
 export class PromptBuilder {
@@ -28,6 +30,10 @@ export class PromptBuilder {
   build(input: PromptInput): string {
     const { issue, agent, workspace } = input;
     const labelsLine = issue.labels.length > 0 ? issue.labels.join(', ') : '(sem labels)';
+    const heartbeatSeconds = Math.max(
+      1,
+      Math.round((this.opts.heartbeatIntervalMs ?? 30_000) / 1000),
+    );
 
     const prompt = [
       '# Identidade do agente',
@@ -62,6 +68,20 @@ export class PromptBuilder {
       '',
       '1. PR aberto para esta issue, com CI verde.',
       `2. O corpo do PR deve conter "Closes #${issue.number}".`,
+      '',
+      '# Sinal de vida (heartbeat)',
+      '',
+      `Enquanto trabalha, atualize o arquivo \`.symphony/heartbeat\` a cada ~${heartbeatSeconds}s`,
+      '(por exemplo, antes/depois de cada passo demorado):',
+      '',
+      '```bash',
+      'date +%s > .symphony/heartbeat',
+      '```',
+      '',
+      'O orquestrador usa esse sinal para saber que você está vivo mesmo quando',
+      'não há output no terminal (ex.: durante uma compilação ou teste longo).',
+      'Se o heartbeat parar de atualizar e não houver output, seu processo será',
+      'considerado travado e reiniciado.',
       '',
       '# Se você travar',
       '',

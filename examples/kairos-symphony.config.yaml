@@ -74,7 +74,9 @@ routing:
 # ─────────────────────────────────────────────────────────────────────
 limits:
   concurrent_agents: 5                  # quantos agentes em paralelo no host
-  stall_timeout_ms: 600000              # 10min sem heartbeat = stalled
+  stall_timeout_ms: 600000              # 10min sem output nem heartbeat = stalled
+  heartbeat_interval_ms: 30000          # intervalo sugerido ao agente p/ atualizar .symphony/heartbeat
+  kill_grace_ms: 5000                   # janela entre SIGTERM e SIGKILL ao encerrar um agente
   max_retries: 3                        # tentativas após crash antes de bloquear
   retry_backoff_ms: [60000, 240000, 960000]  # 1min, 4min, 16min
 
@@ -102,17 +104,15 @@ logging:
   language: pt-BR                       # pt-BR | en
 
 # ─────────────────────────────────────────────────────────────────────
-# Observabilidade (opcional)
+# Observabilidade (opcional, §13.2)
+# Um único servidor HTTP local-first serve /healthz e /metrics (Prometheus).
+# Desabilitado por default; bind em 127.0.0.1 (não exposto à rede).
 # ─────────────────────────────────────────────────────────────────────
 observability:
   metrics:
-    enabled: true
-    listen_port: 9090
-    path: /metrics
-  health:
-    enabled: true
-    listen_port: 8080
-    path: /healthz
+    enabled: false                        # true para subir /healthz e /metrics
+    host: 127.0.0.1
+    listen_port: 9464
 
 # ─────────────────────────────────────────────────────────────────────
 # Segurança
@@ -121,6 +121,36 @@ security:
   forbid_direct_push_to_branches: [main, master, production]
   scan_for_secrets_in_prompt: true      # bloqueia prompt com pattern de secret
   require_human_approval_for_labels: [needs-approval, security-critical]
+
+# ─────────────────────────────────────────────────────────────────────
+# Harness-readiness (§16) — valida que o repo alvo está pronto p/ agentes
+# ─────────────────────────────────────────────────────────────────────
+harness:
+  enabled: true                         # roda o gate no startup
+  skip_check: false                     # true = modo unsafe (== --skip-harness-check)
+  mode_on_failure: refuse               # refuse (exit!=0) | validation_only (sobe sem despachar)
+  revalidate_every_dispatches: 100      # re-valida a cada N dispatches (0 = off)
+  revalidate_every_hours: 24            # ...ou a cada N horas; degradou → modo drain
+
+# ─────────────────────────────────────────────────────────────────────
+# Iteração (§17) — single-shot (default) ou loop autônomo por issue
+# Precedência: frontmatter da issue > label iterate:* > per_label_overrides > default
+# ─────────────────────────────────────────────────────────────────────
+iteration:
+  default_mode: single                  # single | loop
+  default_max_iterations: 10
+  default_completion_promise: "DONE"    # última linha do checkpoint que conclui o loop
+  loop_warning_threshold_ms: 14400000   # 4h — avisa se um loop ocupa slot por mais que isso
+  per_label_overrides:
+    - label: migration
+      mode: loop
+      max_iterations: 30
+    - label: refactor-large
+      mode: loop
+      max_iterations: 20
+    - label: bug-fix-complex
+      mode: loop
+      max_iterations: 15
 
 # ─────────────────────────────────────────────────────────────────────
 # PRO (proprietário, comentado)

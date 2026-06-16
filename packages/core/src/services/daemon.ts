@@ -6,8 +6,11 @@ import type { Clock, TimerHandle } from '../ports/clock.js';
 import type { FactoryPort } from '../ports/factory.js';
 import type { StateStore } from '../ports/store.js';
 import type { TrackerPort } from '../ports/tracker.js';
-import { AgentSupervisor, type SupervisorCfg } from './agent-supervisor.js';
+import { AgentSupervisor, type LoopRuntime, type SupervisorCfg } from './agent-supervisor.js';
+import type { HarnessReport } from './harness-validator.js';
+import { type IterationConfig, resolveIterationMode } from './iteration.js';
 import type { Logger } from './logger.js';
+import type { MetricsSink } from './metrics.js';
 import { type PromptBuilder, PromptTooLargeError } from './prompt-builder.js';
 import type { Reconciler } from './reconciler.js';
 import type { Router } from './router.js';
@@ -15,6 +18,22 @@ import { type WorkspaceManager, WorktreeCreateFailed } from './workspace-manager
 
 export interface DaemonCfg extends SupervisorCfg {
   concurrentLimit: number;
+}
+
+/**
+ * Política de re-validação de harness durante a operação (§16.4/§16.5). A
+ * checagem inicial (§16.2/§16.3) é feita pelo comando `start` antes de subir
+ * o loop; aqui tratamos o warning por dispatch quando o check foi pulado e a
+ * re-validação periódica que dispara o modo drain.
+ */
+export interface DaemonHarnessPolicy {
+  validator: { validate(): HarnessReport };
+  /** Check pulado via --skip-harness-check (§16.4): emite warning por dispatch. */
+  skipCheck: boolean;
+  /** Re-valida a cada N dispatches (0 = desabilitado). */
+  revalidateEveryDispatches: number;
+  /** Re-valida a cada N ms (0 = desabilitado). */
+  revalidateEveryMs: number;
 }
 
 export interface DaemonDeps {
@@ -30,17 +49,42 @@ export interface DaemonDeps {
   reconciler: Reconciler;
   pollIntervalMs: number;
   cfg: DaemonCfg;
+  /** Leitor de heartbeat cooperativo (§8.1) repassado aos supervisores. */
+  readHeartbeat?: (path: string) => number | null;
+  /** Sink de métricas (§13.2); opcional. */
+  metrics?: MetricsSink;
+  /** Política de harness-readiness (§16); opcional. */
+  harness?: DaemonHarnessPolicy | undefined;
+  /** Configuração de iteração (§17); ausente = sempre single-shot. */
+  iteration?: IterationConfig | undefined;
 }
 
 export class Daemon {
   private readonly supervisors = new Map<IssueId, AgentSupervisor>();
   private timer: TimerHandle | null = null;
   private running = false;
+  private dispatchPaused = false;
+  private dispatchesSinceCheck = 0;
+  private lastCheckAtMs = 0;
 
   constructor(private readonly deps: DaemonDeps) {}
 
   activeSupervisors(): Map<IssueId, AgentSupervisor> {
     return this.supervisors;
+  }
+
+  /** Pausa o despacho de novas issues (modo validation-only ou drain, §16). */
+  pauseDispatch(): void {
+    this.dispatchPaused = true;
+  }
+
+  /** Retoma o despacho de novas issues. */
+  resumeDispatch(): void {
+    this.dispatchPaused = false;
+  }
+
+  isDispatchPaused(): boolean {
+    return this.dispatchPaused;
   }
 
   async dispatch(issue: Issue): Promise<void> {
@@ -95,6 +139,28 @@ export class Daemon {
       occurredAt: now,
     });
     await this.deps.tracker.transitionState(issue.id, 'in_progress', 'symphony dispatched');
+
+    // §17: resolve modo de iteração; em loop, prepara o runtime do supervisor.
+    let loop: LoopRuntime | undefined;
+    if (this.deps.iteration) {
+      const resolved = resolveIterationMode(issue, this.deps.iteration);
+      if (resolved.mode === 'loop') {
+        loop = {
+          maxIterations: resolved.maxIterations,
+          completionPromise: resolved.completionPromise,
+          warningThresholdMs: this.deps.iteration.loopWarningThresholdMs,
+        };
+        if (resolved.validationCommand) loop.validationCommand = resolved.validationCommand;
+        this.deps.log.info({
+          event: 'loop_started',
+          issue_id: issue.id,
+          max_iterations: resolved.maxIterations,
+          correlation_id: correlationId,
+          message: `Issue ${issue.id} em modo loop (máx ${resolved.maxIterations} iterações)`,
+        });
+      }
+    }
+
     const sup = new AgentSupervisor({
       issue,
       agent,
@@ -107,10 +173,22 @@ export class Daemon {
       clock: this.deps.clock,
       log: this.deps.log,
       cfg: this.deps.cfg,
+      readHeartbeat: this.deps.readHeartbeat,
+      metrics: this.deps.metrics,
+      loop,
       onDone: (id) => this.removeSupervisor(id),
     });
     this.supervisors.set(issue.id, sup);
     sup.start();
+    this.deps.metrics?.recordDispatch();
+    this.dispatchesSinceCheck += 1;
+    if (this.deps.harness?.skipCheck) {
+      this.deps.log.warn({
+        event: 'harness_check_bypassed',
+        issue_id: issue.id,
+        message: '⚠️  HARNESS CHECK BYPASSED — output quality will likely be poor',
+      });
+    }
     this.deps.log.info({
       event: 'issue_dispatched',
       issue_id: issue.id,
@@ -126,11 +204,14 @@ export class Daemon {
 
   async tick(): Promise<void> {
     await this.deps.reconciler.run({ dryRun: false });
-    const ready = await this.deps.tracker.fetchIssuesByState('ready');
-    for (const issue of ready) {
-      if (this.supervisors.size >= this.deps.cfg.concurrentLimit) break;
-      if (this.supervisors.has(issue.id)) continue;
-      await this.dispatch(issue);
+    this.maybeRevalidateHarness();
+    if (!this.dispatchPaused) {
+      const ready = await this.deps.tracker.fetchIssuesByState('ready');
+      for (const issue of ready) {
+        if (this.supervisors.size >= this.deps.cfg.concurrentLimit) break;
+        if (this.supervisors.has(issue.id)) continue;
+        await this.dispatch(issue);
+      }
     }
     for (const sup of [...this.supervisors.values()]) {
       await sup.tick();
@@ -159,8 +240,40 @@ export class Daemon {
     this.supervisors.delete(issueId);
   }
 
+  /**
+   * Re-validação periódica de harness (§16.5): a cada N dispatches ou N horas,
+   * re-roda o check; se degradou, entra em modo drain (não pega novas issues,
+   * deixa as ativas terminarem).
+   */
+  private maybeRevalidateHarness(): void {
+    const h = this.deps.harness;
+    if (!h || h.skipCheck || this.dispatchPaused) return;
+    const now = this.deps.clock.now().getTime();
+    const byDispatch =
+      h.revalidateEveryDispatches > 0 && this.dispatchesSinceCheck >= h.revalidateEveryDispatches;
+    const byTime = h.revalidateEveryMs > 0 && now - this.lastCheckAtMs >= h.revalidateEveryMs;
+    if (!byDispatch && !byTime) return;
+    this.dispatchesSinceCheck = 0;
+    this.lastCheckAtMs = now;
+    const report = h.validator.validate();
+    if (report.ready) {
+      this.deps.log.info({
+        event: 'harness_revalidated',
+        message: 'Harness re-validado: repo continua harness-ready',
+      });
+      return;
+    }
+    this.dispatchPaused = true;
+    this.deps.log.error({
+      event: 'harness_degraded',
+      failures: report.failures,
+      message: `Harness degradou — entrando em modo drain (sem novos dispatches): ${report.failures.join('; ')}`,
+    });
+  }
+
   async start(): Promise<void> {
     this.running = true;
+    this.lastCheckAtMs = this.deps.clock.now().getTime();
     this.deps.log.info({ event: 'daemon_started', message: 'Symphony daemon iniciado' });
     const loop = async (): Promise<void> => {
       if (!this.running) return;

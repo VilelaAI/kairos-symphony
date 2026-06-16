@@ -21,6 +21,9 @@ describe('SPEC §15 — Checklist de conformidade (M1)', () => {
     'spec-11-logs.test.ts',
     'spec-12-security.test.ts',
     'spec-13-1-terminal-stream.test.ts',
+    'spec-13-2-endpoints-metrics.test.ts',
+    'spec-16-harness.test.ts',
+    'spec-17-loop.test.ts',
   ];
 
   it('todos os arquivos de conformance do M1 existem', () => {

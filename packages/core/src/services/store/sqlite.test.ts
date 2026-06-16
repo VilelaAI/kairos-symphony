@@ -154,3 +154,44 @@ describe('SqliteStateStore — dispatches', () => {
     expect(row.ended_at).toBe('2026-05-18T10:05:00.000Z');
   });
 });
+
+describe('SqliteStateStore — observabilidade (§13.2)', () => {
+  let store: SqliteStateStore;
+  beforeEach(() => {
+    store = new SqliteStateStore({ path: ':memory:' });
+  });
+  afterEach(() => store.close());
+
+  it('countByState agrega por estado', () => {
+    store.upsertIssue({ ...sample, issueId: 'r#1', state: 'in_progress' });
+    store.upsertIssue({ ...sample, issueId: 'r#2', state: 'in_progress' });
+    store.upsertIssue({ ...sample, issueId: 'r#3', state: 'done' });
+    const counts = store.countByState();
+    expect(counts.in_progress).toBe(2);
+    expect(counts.done).toBe(1);
+    expect(counts.ready ?? 0).toBe(0);
+  });
+
+  it('listTransitions retorna o histórico, filtrável por issue', () => {
+    const t = (issueId: string, occurredAt: string): Transition => ({
+      issueId,
+      fromState: 'ready',
+      toState: 'in_progress',
+      reason: 'symphony dispatched',
+      evidence: null,
+      correlationId: 'cid',
+      occurredAt,
+    });
+    store.upsertIssue({ ...sample, issueId: 'r#1' });
+    store.upsertIssue({ ...sample, issueId: 'r#2' });
+    store.recordTransition(t('r#1', '2026-05-18T10:00:00.000Z'));
+    store.recordTransition(t('r#2', '2026-05-18T10:01:00.000Z'));
+    store.recordTransition(t('r#1', '2026-05-18T10:02:00.000Z'));
+
+    expect(store.listTransitions()).toHaveLength(3);
+    const only1 = store.listTransitions('r#1');
+    expect(only1).toHaveLength(2);
+    expect(only1.every((x) => x.issueId === 'r#1')).toBe(true);
+    expect(only1[0]?.occurredAt).toBe('2026-05-18T10:00:00.000Z');
+  });
+});

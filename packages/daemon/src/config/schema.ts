@@ -37,6 +37,8 @@ export const ConfigSchema = z.object({
       max_retries: z.number().int().nonnegative().default(3),
       retry_backoff_ms: z.array(z.number().int().positive()).default([60_000, 240_000, 960_000]),
       prompt_max_size_bytes: z.number().int().positive().default(1_048_576),
+      heartbeat_interval_ms: z.number().int().positive().default(30_000),
+      kill_grace_ms: z.number().int().positive().default(5_000),
     })
     .default({} as never),
   storage: z.object({
@@ -49,6 +51,43 @@ export const ConfigSchema = z.object({
       format: z.literal('json').default('json'),
       output: z.string().default('stdout'),
       language: z.enum(['pt-BR', 'en']).default('pt-BR'),
+    })
+    .default({} as never),
+  observability: z
+    .object({
+      metrics: z
+        .object({
+          enabled: z.boolean().default(false),
+          host: z.string().default('127.0.0.1'),
+          listen_port: z.number().int().positive().default(9464),
+        })
+        .default({} as never),
+    })
+    .default({} as never),
+  harness: z
+    .object({
+      enabled: z.boolean().default(true),
+      skip_check: z.boolean().default(false),
+      mode_on_failure: z.enum(['refuse', 'validation_only']).default('refuse'),
+      revalidate_every_dispatches: z.number().int().nonnegative().default(100),
+      revalidate_every_hours: z.number().nonnegative().default(24),
+    })
+    .default({} as never),
+  iteration: z
+    .object({
+      default_mode: z.enum(['single', 'loop']).default('single'),
+      default_max_iterations: z.number().int().positive().default(10),
+      default_completion_promise: z.string().min(1).default('DONE'),
+      loop_warning_threshold_ms: z.number().int().positive().default(14_400_000),
+      per_label_overrides: z
+        .array(
+          z.object({
+            label: z.string().min(1),
+            mode: z.enum(['single', 'loop']),
+            max_iterations: z.number().int().positive().optional(),
+          }),
+        )
+        .default([]),
     })
     .default({} as never),
 });
