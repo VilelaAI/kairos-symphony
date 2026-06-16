@@ -86,7 +86,7 @@ A SPEC `0.4.0-draft` (18 seções) foi decomposta em 5 milestones de implementa�
 
 O que **já roda** (M1-M5):
 
-- **Monorepo** pnpm workspaces (`packages/{core,adapter-github,cli-claude-code,factory-kairos-forge,daemon}`), TypeScript Node ≥ 22.5.
+- **Monorepo** pnpm workspaces (`packages/{core,adapter-github,cli-claude-code,factory-kairos-forge,daemon}`), TypeScript Node ≥ 22.13.
 - **Loop principal** poll → reconcile → dispatch → monitor → cleanup, com os 6 estados canônicos da §2.
 - **Tracker:** adapter GitHub (Issues + detecção de PR via `Closes #N` e convenção de branch `symphony/<issue_id>`).
 - **CLI:** Claude Code via `node-pty` (PTY real, §4.1), modo de permissão configurável.
@@ -111,7 +111,7 @@ Fora do escopo atual (ver [roadmap](#roadmap)): multi-CLI (Codex, OpenCode), mul
 ### Desenvolvimento
 
 ```bash
-pnpm install        # Node ≥ 22.5, pnpm ≥ 11
+pnpm install        # Node ≥ 22.13, pnpm ≥ 11
 pnpm build          # tsc por package
 pnpm test           # 161 testes (vitest)
 pnpm test:conformance   # só a suíte de conformidade da SPEC

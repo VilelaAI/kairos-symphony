@@ -4,7 +4,7 @@ Este roteiro prova end-to-end que o walking skeleton funciona em hardware real, 
 
 ## Pré-requisitos
 
-1. **Node ≥ 22.5** (`node --version`)
+1. **Node ≥ 22.13** (`node --version`)
 2. **pnpm ≥ 11** (`pnpm --version`)
 3. **`claude` CLI** instalado no PATH, autenticado (`which claude`, `claude --version`)
 4. **`gh` CLI** autenticado em conta com acesso ao repo de teste

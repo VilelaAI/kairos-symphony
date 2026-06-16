@@ -11,3 +11,6 @@ allowBuilds:
   better-sqlite3: true
   esbuild: true
   node-pty: true
+  # msw tem um postinstall opcional (node -e try/catch) que é no-op em Node e não
+  # é necessário nos testes — false silencia o ERR_PNPM_IGNORED_BUILDS sem rodá-lo.
+  msw: false
