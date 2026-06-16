@@ -20,6 +20,9 @@ jobs:
           node-version: '22.13.0'
           cache: 'pnpm'
       - run: pnpm install --frozen-lockfile
+      # Build primeiro: os pacotes resolvem @kairos-symphony/* via dist/ (workspace
+      # symlink + package.json types), então typecheck e testes precisam do build.
+      - run: pnpm build
       - run: pnpm lint
       - run: pnpm typecheck
       - run: pnpm test --coverage
