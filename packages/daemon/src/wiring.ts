@@ -1,5 +1,5 @@
 import { GithubTracker } from '@kairos-symphony/adapter-github';
-import { ClaudeCodeCli } from '@kairos-symphony/cli-claude-code';
+import { ClaudeCodeCli, RuntimeHarnessCli } from '@kairos-symphony/cli-claude-code';
 import {
   Daemon,
   Logger,
@@ -31,7 +31,8 @@ export function buildDaemon(
   if (!owner || !repo) throw new Error('tracker.repo inválido');
 
   const tracker = new GithubTracker({ owner, repo, token });
-  const cli = new ClaudeCodeCli();
+  const cliMode = env.KAIROS_SYMPHONY_CLI_MODE;
+  const cli = cliMode === 'harness' ? new RuntimeHarnessCli() : new ClaudeCodeCli();
   const agentsDir = cfg.factory.local_path ?? discoverForgeAgentsDir() ?? '';
   if (!agentsDir) {
     throw new Error(
