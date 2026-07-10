@@ -1,6 +1,21 @@
 import type { AgentProcess, CliPort, SpawnOpts } from '@kairos-symphony/core'
-import type { HarnessInvokeOptions, HarnessResult } from '@kairos.ai/runtime/harness'
+import type {
+  HarnessInvokeOptions,
+  HarnessResult,
+  HarnessRunnerDeps,
+} from '@kairos.ai/runtime/harness'
 import { createHarnessRunner } from '@kairos.ai/runtime/harness'
+
+const DEFAULT_TIMEOUT_MS = 300_000
+const DEFAULT_MAX_TURNS = 30
+
+export interface RuntimeHarnessCliOptions {
+  timeoutMs?: number
+  maxTurns?: number
+  maxBudgetUsd?: number
+  /** Injeta deps no harness runner (testes). */
+  harnessDeps?: HarnessRunnerDeps
+}
 
 function mapPermissionMode(
   mode: SpawnOpts['permissionMode'],
@@ -11,7 +26,6 @@ function mapPermissionMode(
     case 'auto':
       return 'auto'
     case 'bypass':
-      // Harness não tem 'bypass'; degradar para 'auto' mantém execução.
       return 'auto'
     default: {
       const _exhaustive: never = mode
@@ -20,61 +34,100 @@ function mapPermissionMode(
   }
 }
 
+/**
+ * CliPort que delega spawn ao `runtime.harness()` (SPEC-E009 HAR-09).
+ * Emite stdout via onData (stall detection + terminal.log) e suporta kill().
+ */
 export class RuntimeHarnessCli implements CliPort {
+  constructor(private readonly options: RuntimeHarnessCliOptions = {}) {}
+
   spawn(opts: SpawnOpts): AgentProcess {
+    const abort = new AbortController()
     let dataHandler: ((chunk: string) => void) | null = null
     let exitHandler: ((exitCode: number, signal: string | null) => void) | null = null
-    let pendingText: string | null = null
-    let pendingExit:
-      | {
-          exitCode: number
-          signal: string | null
-        }
-      | null = null
+    const pendingChunks: string[] = []
+    let pendingExit: { exitCode: number; signal: string | null } | null = null
+    let finished = false
 
-    const runPromise = (async () => {
+    const emitChunk = (chunk: string) => {
+      if (dataHandler) dataHandler(chunk)
+      else pendingChunks.push(chunk)
+    }
+
+    const emitExit = (exitCode: number, signal: string | null) => {
+      if (finished) return
+      finished = true
+      pendingExit = { exitCode, signal }
+      if (exitHandler) exitHandler(exitCode, signal)
+    }
+
+    const timeoutMs = this.options.timeoutMs ?? DEFAULT_TIMEOUT_MS
+    const maxTurns = this.options.maxTurns ?? DEFAULT_MAX_TURNS
+    const binPath = opts.binaryPath || 'claude'
+
+    void (async () => {
+      emitChunk('[kairos-harness] iniciando execução…\n')
+
       try {
-        const runner = createHarnessRunner()
-        const result: HarnessResult = await runner.run({
+        const runner = createHarnessRunner({
+          ...this.options.harnessDeps,
+          binPaths: {
+            'claude-code': binPath,
+            ...(this.options.harnessDeps?.binPaths ?? {}),
+          },
+          defaults: {
+            provider: 'claude-code',
+            maxTurns,
+            timeoutMs,
+            ...(this.options.maxBudgetUsd != null
+              ? { maxBudgetUsd: this.options.maxBudgetUsd }
+              : {}),
+            ...(this.options.harnessDeps?.defaults ?? {}),
+          },
+        })
+
+        const invokeOpts: HarnessInvokeOptions = {
           prompt: opts.prompt,
           cwd: opts.cwd,
           provider: 'claude-code',
-          maxTurns: 30,
-          maxBudgetUsd: undefined,
           permissionMode: mapPermissionMode(opts.permissionMode),
-          timeoutMs: undefined,
-          tools: undefined,
-          schema: undefined,
-          env: opts.env,
-        })
+          timeoutMs,
+          maxTurns,
+          signal: abort.signal,
+          onStdout: emitChunk,
+          meta: { symphonyCli: 'runtime-harness' },
+        }
+        if (opts.env) invokeOpts.env = opts.env
+        if (this.options.maxBudgetUsd != null) {
+          invokeOpts.maxBudgetUsd = this.options.maxBudgetUsd
+        }
 
-        pendingText = result.text
-        if (dataHandler) dataHandler(pendingText)
+        const result: HarnessResult = await runner.run(invokeOpts)
 
-        pendingExit = { exitCode: result.isError ? 1 : 0, signal: null }
-        if (exitHandler) exitHandler(pendingExit.exitCode, pendingExit.signal)
-      } catch (err) {
-        pendingExit = { exitCode: 1, signal: null }
-        if (exitHandler) exitHandler(pendingExit.exitCode, pendingExit.signal)
+        if (result.text && result.text.length > 0) {
+          emitChunk(result.text.endsWith('\n') ? result.text : `${result.text}\n`)
+        }
+
+        emitExit(result.isError ? 1 : 0, null)
+      } catch {
+        emitExit(1, null)
       }
     })()
 
-    // Sem PTY no slice HAR-09 (adapter). `pid` é best-effort.
     return {
-      pid: 0,
-      onData(h) {
-        dataHandler = h
-        if (pendingText) dataHandler(pendingText)
+      pid: process.pid,
+      onData(handler) {
+        dataHandler = handler
+        for (const chunk of pendingChunks) handler(chunk)
+        pendingChunks.length = 0
       },
-      onExit(h) {
-        exitHandler = h
-        if (pendingExit) exitHandler(pendingExit.exitCode, pendingExit.signal)
-        void runPromise
+      onExit(handler) {
+        exitHandler = handler
+        if (pendingExit) handler(pendingExit.exitCode, pendingExit.signal)
       },
-      kill() {
-        // Best-effort (slice inicial). Runtime/harness ainda não plumbou abort/cancel.
+      kill(_signal) {
+        if (!finished) abort.abort()
       },
     }
   }
 }
-

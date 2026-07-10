@@ -32,7 +32,10 @@ export function buildDaemon(
 
   const tracker = new GithubTracker({ owner, repo, token });
   const cliMode = env.KAIROS_SYMPHONY_CLI_MODE;
-  const cli = cliMode === 'harness' ? new RuntimeHarnessCli() : new ClaudeCodeCli();
+  const cli =
+    cliMode === 'harness'
+      ? new RuntimeHarnessCli({ timeoutMs: cfg.limits.stall_timeout_ms })
+      : new ClaudeCodeCli();
   const agentsDir = cfg.factory.local_path ?? discoverForgeAgentsDir() ?? '';
   if (!agentsDir) {
     throw new Error(
