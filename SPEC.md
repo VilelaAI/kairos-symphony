@@ -519,6 +519,11 @@ iterate:
 
 ### 17.3 Execução do loop
 
+> **A partir da v0.4: quando o arco da fábrica está disponível, ele substitui o
+> checkpoint como condição de parada (§17.7).** O que segue abaixo é o caminho de
+> fallback — válido, e o único disponível quando o repositório não é conduzido pelo
+> arco.
+
 Quando uma issue dispatched está em modo loop, implementações **MUST**:
 
 1. Criar **checkpoint file** em `<workspace>/.perseguir/checkpoint.md` antes da primeira iteração
@@ -559,6 +564,44 @@ Esta seção deliberadamente NÃO define:
 - **Hot-swap de prompt em loop ativo** — se operador quer mudar abordagem, deve cancelar loop atual e reiniciar
 - **Loop multi-agente** — uma issue = um agente em loop. Pra paralelismo, abra múltiplas issues
 - **Cost tracking de loop** — depende do CLI; Symphony não agrega tokens no v0.3
+
+### 17.7 Arco da fábrica no comando (contrato `kairos-forge/ciclo`)
+
+O §17.3 fecha o loop lendo a última linha de `.perseguir/checkpoint.md` — arquivo
+escrito **pelo próprio agente**. A condição de parada é a palavra dele, e um agente
+que se declara pronto está avaliando a própria entrega.
+
+O kairos-forge publica desde a v0.27 um contrato de integração versionado
+(ADR-0034 do Forge) que resolve isso do lado certo: uma máquina de estados
+determinística, com veredicto lido de artefato, orçamento contado por código e
+escalação automática.
+
+Quando o contrato está disponível, implementações **MUST**:
+
+1. Ler o estado com `ciclo.py estado --json` no workspace da issue, a cada fim de
+   iteração e antes da primeira.
+2. **Recusar contrato de major incompatível**, degradando para §17.3 — campo com
+   mesmo nome e semântica trocada é o pior modo de falha possível.
+3. Decidir pelos campos **derivados**, nunca comparando `estado` com literal:
+
+| Campo do contrato | Desfecho no Symphony |
+|---|---|
+| `aguardando_humano: true` | → `blocked`, com `proximo_passo` na razão. O gate humano do Forge vira pergunta na issue |
+| `terminal: true` + `motivo_escalacao` | → `blocked` com o motivo que o `ciclo.py` escreveu |
+| `terminal: true` (encerrado) | → `review_pending` |
+| nem um nem outro | próxima iteração, com `proximo_passo` no prompt |
+
+4. **Não criar o checkpoint** quando o arco manda. Dois lugares dizendo o progresso
+   divergem no primeiro esquecimento.
+5. Manter o teto de `max_iterations` **por cima** do orçamento do arco: o arco conta
+   as rodadas dele, mas quem paga o slot é o Symphony.
+
+O prompt da iteração passa a carregar `proximo_passo` e a lista de
+`resultados_validos` — o agente executa o passo e registra o resultado; quem decide
+a transição é o script, que recusa resultado inválido no estado.
+
+Sem `scripts/ciclo.py` na instalação do Forge, ou sem ciclo aberto no workspace, o
+comportamento é o do §17.3, inalterado.
 
 ## 18. Mudanças e versionamento
 

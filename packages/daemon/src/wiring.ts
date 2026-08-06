@@ -13,7 +13,11 @@ import {
   WorkspaceManager,
   defaultHarnessProbe,
 } from '@kairos-symphony/core';
-import { KairosForgeFactory, discoverForgeAgentsDir } from '@kairos-symphony/factory-kairos-forge';
+import {
+  ForgeArc,
+  KairosForgeFactory,
+  discoverForgeAgentsDir,
+} from '@kairos-symphony/factory-kairos-forge';
 import type { SymphonyConfig } from './config/schema.js';
 
 export interface WiredDaemon {
@@ -44,6 +48,11 @@ export function buildDaemon(
     );
   }
   const factory = new KairosForgeFactory({ agentsDir });
+  // Arco da fábrica (contrato `kairos-forge/ciclo`, ADR-0034 do Forge). Presente, o
+  // loop autônomo para pela máquina de estados do Forge em vez do checkpoint que o
+  // próprio agente escreve. Ausente — instalação antiga, sem `scripts/` —, o
+  // comportamento é o da v0.3, sem quebrar ninguém.
+  const scriptsDir = factory.scriptsDir();
   const store = new SqliteStateStore({ path: cfg.storage.path });
   const log = new Logger({ level: cfg.logging.level });
   const clock = new SystemClock();
@@ -75,10 +84,30 @@ export function buildDaemon(
     listWorkspacesOnDisk: () => wm.listAllOnDisk(),
     describeWorkspace: (id) => wm.describe(id),
   });
+  const arc = scriptsDir
+    ? new ForgeArc({
+        scriptsDir,
+        onWarn: (message, extra) => log.warn({ event: 'arc_warning', message, ...extra }),
+      })
+    : undefined;
+  if (arc) {
+    log.info({
+      event: 'arc_enabled',
+      message: `Arco da fábrica ativo (${scriptsDir}) — loop autônomo para pelo ciclo.py`,
+    });
+  } else {
+    log.warn({
+      event: 'arc_unavailable',
+      message:
+        'scripts/ do kairos-forge não encontrado — o loop autônomo cai no checkpoint ' +
+        'escrito pelo agente. Atualize o plugin para o arco assumir a condição de parada.',
+    });
+  }
   daemon = new Daemon({
     tracker,
     cli,
     factory,
+    ...(arc ? { arc } : {}),
     store,
     log,
     clock,

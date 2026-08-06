@@ -1,6 +1,7 @@
 import { newCorrelationId } from '../domain/correlation.js';
 import type { Issue, IssueId } from '../domain/issue.js';
 import type { WorkspaceInfo } from '../domain/workspace.js';
+import type { ArcPort } from '../ports/arc.js';
 import type { CliPort } from '../ports/cli.js';
 import type { Clock, TimerHandle } from '../ports/clock.js';
 import type { FactoryPort } from '../ports/factory.js';
@@ -57,6 +58,12 @@ export interface DaemonDeps {
   harness?: DaemonHarnessPolicy | undefined;
   /** Configuração de iteração (§17); ausente = sempre single-shot. */
   iteration?: IterationConfig | undefined;
+  /**
+   * Arco da fábrica (contrato `kairos-forge/ciclo`). Presente, o loop autônomo passa
+   * a parar pela máquina de estados do Forge em vez do checkpoint escrito pelo agente.
+   * Ausente, o comportamento é o da v0.3.
+   */
+  arc?: ArcPort | undefined;
 }
 
 export class Daemon {
@@ -176,9 +183,13 @@ export class Daemon {
       readHeartbeat: this.deps.readHeartbeat,
       metrics: this.deps.metrics,
       loop,
+      arc: this.deps.arc,
       onDone: (id) => this.removeSupervisor(id),
     });
     this.supervisors.set(issue.id, sup);
+    // Primeira leitura do arco antes do primeiro spawn: assim a iteração 1 já recebe
+    // o `proximoPasso` no prompt, e o checkpoint não é criado quando o arco manda.
+    if (loop && this.deps.arc) await sup.primeReadArc();
     sup.start();
     this.deps.metrics?.recordDispatch();
     this.dispatchesSinceCheck += 1;

@@ -73,3 +73,74 @@ describe('discoverForgeAgentsDir', () => {
     }
   });
 });
+
+describe('KairosForgeFactory — skills e scripts (a outra metade da fábrica)', () => {
+  function forgeFalso(): string {
+    const root = mkdtempSync(join(tmpdir(), 'forge-root-'));
+    mkdirSync(join(root, 'agents'), { recursive: true });
+    writeFileSync(
+      join(root, 'agents', 'laura-techlead.md'),
+      '---\nname: laura-techlead\ndescription: Tech Lead\n---\n\nOi, Laura aqui.\n',
+    );
+    for (const [nome, desc] of [
+      ['entregar', 'Conduz o ciclo completo da fábrica'],
+      ['validar', 'Valida a implementação contra a SPEC'],
+    ]) {
+      mkdirSync(join(root, 'skills', nome), { recursive: true });
+      writeFileSync(
+        join(root, 'skills', nome, 'SKILL.md'),
+        `---\nname: ${nome}\ndescription: ${desc}\n---\n\n# ${nome}\n\nCorpo da skill.\n`,
+      );
+    }
+    // diretório sem SKILL.md não conta como skill
+    mkdirSync(join(root, 'skills', 'rascunho'), { recursive: true });
+    mkdirSync(join(root, 'scripts'), { recursive: true });
+    writeFileSync(join(root, 'scripts', 'ciclo.py'), '# ciclo\n');
+    return root;
+  }
+
+  it('lista skills, ignorando diretório sem SKILL.md', async () => {
+    const root = forgeFalso();
+    const f = new KairosForgeFactory({ agentsDir: join(root, 'agents') });
+    await expect(f.listSkills()).resolves.toEqual(['entregar', 'validar']);
+  });
+
+  it('carrega uma skill com description do frontmatter', async () => {
+    const root = forgeFalso();
+    const f = new KairosForgeFactory({ agentsDir: join(root, 'agents') });
+    const s = await f.loadSkill('entregar');
+    expect(s.name).toBe('entregar');
+    expect(s.description).toContain('ciclo completo');
+    expect(s.body).toContain('Corpo da skill');
+    expect(s.body).not.toContain('---'); // frontmatter fora do corpo
+  });
+
+  it('skill inexistente falha com o caminho no erro', async () => {
+    const root = forgeFalso();
+    const f = new KairosForgeFactory({ agentsDir: join(root, 'agents') });
+    await expect(f.loadSkill('nao-existe')).rejects.toThrow(/nao-existe/);
+  });
+
+  it('scriptsDir aponta para os scripts do Forge', () => {
+    const root = forgeFalso();
+    const f = new KairosForgeFactory({ agentsDir: join(root, 'agents') });
+    expect(f.scriptsDir()).toBe(join(root, 'scripts'));
+  });
+
+  it('instalação sem skills/ nem scripts/ degrada sem quebrar', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'forge-magro-'));
+    mkdirSync(join(root, 'agents'), { recursive: true });
+    const f = new KairosForgeFactory({ agentsDir: join(root, 'agents') });
+    await expect(f.listSkills()).resolves.toEqual([]);
+    expect(f.scriptsDir()).toBeNull();
+  });
+
+  it('forgeRoot explícito vence a derivação por agentsDir', async () => {
+    const root = forgeFalso();
+    const f = new KairosForgeFactory({
+      agentsDir: join(root, 'agents'),
+      forgeRoot: root,
+    });
+    await expect(f.listSkills()).resolves.toEqual(['entregar', 'validar']);
+  });
+});
