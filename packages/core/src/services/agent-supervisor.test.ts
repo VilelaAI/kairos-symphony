@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { AgentDescriptor } from '../domain/agent.js';
 import type { Issue } from '../domain/issue.js';
 import type { WorkspaceInfo } from '../domain/workspace.js';
+import type { ArcPort, ArcState } from '../ports/arc.js';
 import type { AgentProcess, CliPort, SpawnOpts } from '../ports/cli.js';
 import type { Clock, TimerHandle } from '../ports/clock.js';
 import type { StateStore } from '../ports/store.js';
@@ -752,5 +753,195 @@ describe('AgentSupervisor — loop autônomo (§17)', () => {
     await flush();
     expect(cli.spawned.length).toBe(1);
     expect(['terminating', 'blocked', 'done']).toContain(sup.state);
+  });
+});
+
+describe('AgentSupervisor — arco da fábrica no comando (kairos-forge/ciclo)', () => {
+  const flush = () => new Promise((r) => setImmediate(r));
+
+  /** Arco falso: devolve estados em sequência, um por leitura. */
+  function fakeArc(estados: Array<Partial<ArcState>>): ArcPort & { lidas: number } {
+    let i = 0;
+    return {
+      lidas: 0,
+      async read(): Promise<ArcState | null> {
+        const base: ArcState = {
+          contrato: '1.0',
+          spec: 'SPEC-001',
+          estado: 'construindo',
+          terminal: false,
+          aguardandoHumano: false,
+          gate: null,
+          proximoPasso: 'Construa pela SPEC.',
+          resultadosValidos: ['pronto'],
+        };
+        const next = estados[Math.min(i, estados.length - 1)];
+        i += 1;
+        return next === null ? null : { ...base, ...next };
+      },
+    };
+  }
+
+  function makeArcLoop(
+    f: ReturnType<typeof makeFixtures>,
+    arc: ArcPort | undefined,
+    opts: { maxIterations?: number; logSink?: (l: string) => void } = {},
+  ) {
+    const cli = new FakeCli();
+    const tracker = new FakeTracker();
+    const sup = new AgentSupervisor({
+      issue: f.issue,
+      agent: f.agent,
+      workspace: f.workspace,
+      prompt: 'BASE',
+      correlationId: 'cid',
+      cli,
+      tracker,
+      store: new FakeStore(),
+      clock: new FakeClock(),
+      log: new Logger({
+        level: opts.logSink ? 'warn' : 'error',
+        write: opts.logSink ?? (() => undefined),
+        now: () => new Date(),
+      }),
+      cfg: baseCfg,
+      loop: {
+        maxIterations: opts.maxIterations ?? 3,
+        completionPromise: 'DONE',
+        warningThresholdMs: 4 * 60 * 60 * 1000,
+      },
+      ...(arc ? { arc } : {}),
+    });
+    return { cli, tracker, sup, checkpoint: join(f.workspace.path, '.perseguir', 'checkpoint.md') };
+  }
+
+  it('estado terminal encerrado → review_pending', async () => {
+    const f = makeFixtures();
+    const { cli, tracker, sup } = makeArcLoop(
+      f,
+      fakeArc([{ estado: 'encerrado', terminal: true, motivoEncerramento: 'PR #7 aberto' }]),
+    );
+    sup.start();
+    cli.last().finish(0);
+    await flush();
+    expect(sup.state).toBe('done');
+    expect(tracker.transitions.some((t) => t.to === 'review_pending')).toBe(true);
+  });
+
+  it('aguardando_humano → blocked, com o passo na razão (o gate humano vira canal)', async () => {
+    const f = makeFixtures();
+    const { cli, tracker, sup } = makeArcLoop(
+      f,
+      fakeArc([
+        {
+          estado: 'aguardando_aprovacao',
+          aguardandoHumano: true,
+          proximoPasso: 'GATE HUMANO — espere SIM/NÃO/AJUSTAR.',
+          resultadosValidos: ['aprovada', 'recusada'],
+        },
+      ]),
+    );
+    sup.start();
+    cli.last().finish(0);
+    await flush();
+    const bloqueio = tracker.transitions.find((t) => t.to === 'blocked');
+    expect(bloqueio).toBeDefined();
+    expect(bloqueio?.reason).toContain('aguardando_aprovacao');
+    expect(bloqueio?.reason).toContain('GATE HUMANO');
+  });
+
+  it('escalado → blocked com o motivo que o próprio ciclo.py escreveu', async () => {
+    const f = makeFixtures();
+    const { cli, tracker, sup } = makeArcLoop(
+      f,
+      fakeArc([
+        {
+          estado: 'escalado',
+          terminal: true,
+          motivoEscalacao: 'orçamento de validar esgotado sem progresso (2/2 rodadas)',
+        },
+      ]),
+    );
+    sup.start();
+    cli.last().finish(0);
+    await flush();
+    const bloqueio = tracker.transitions.find((t) => t.to === 'blocked');
+    expect(bloqueio?.reason).toContain('orçamento de validar esgotado');
+  });
+
+  it('estado não-terminal → próxima iteração, e o arco vence o checkpoint', async () => {
+    const f = makeFixtures();
+    const arc = fakeArc([{ estado: 'validando', proximoPasso: 'Rode /kairos-forge:validar.' }]);
+    const { cli, tracker, sup, checkpoint } = makeArcLoop(f, arc);
+    sup.start();
+    // O agente escreve DONE — que encerraria o loop no caminho antigo.
+    mkdirSync(join(f.workspace.path, '.perseguir'), { recursive: true });
+    writeFileSync(checkpoint, 'terminei tudo\nDONE\n');
+    cli.last().finish(0);
+    await flush();
+    // O arco diz que não acabou: a palavra do agente não move a máquina.
+    expect(sup.state).not.toBe('done');
+    expect(tracker.transitions.some((t) => t.to === 'review_pending')).toBe(false);
+    expect(cli.spawned.length).toBe(2);
+  });
+
+  it('teto de iterações do §17 vale por cima do arco', async () => {
+    const f = makeFixtures();
+    const { cli, tracker, sup } = makeArcLoop(f, fakeArc([{ estado: 'construindo' }]), {
+      maxIterations: 2,
+    });
+    sup.start();
+    cli.last().finish(0);
+    await flush();
+    cli.last().finish(0);
+    await flush();
+    const bloqueio = tracker.transitions.find((t) => t.to === 'blocked');
+    expect(bloqueio?.reason).toContain('max-iterations-exceeded');
+  });
+
+  it('sem arco, o checkpoint segue mandando (v0.3 preservada)', async () => {
+    const f = makeFixtures();
+    const { cli, tracker, sup, checkpoint } = makeArcLoop(f, undefined);
+    sup.start();
+    expect(existsSync(checkpoint)).toBe(true);
+    writeFileSync(checkpoint, 'pronto\nDONE\n');
+    cli.last().finish(0);
+    await flush();
+    expect(tracker.transitions.some((t) => t.to === 'review_pending')).toBe(true);
+  });
+
+  it('primeReadArc: com arco, o checkpoint nem é criado e o prompt traz o passo', async () => {
+    const f = makeFixtures();
+    const arc = fakeArc([
+      {
+        estado: 'validando',
+        proximoPasso: 'Rode /kairos-forge:validar.',
+        resultadosValidos: ['aprovado', 'bloqueado'],
+      },
+    ]);
+    const { cli, sup, checkpoint } = makeArcLoop(f, arc);
+    await sup.primeReadArc();
+    sup.start();
+    expect(existsSync(checkpoint)).toBe(false); // sem planilha paralela
+    const prompt = cli.lastOpts?.prompt ?? '';
+    expect(prompt).toContain('Arco da fábrica no comando');
+    expect(prompt).toContain('Rode /kairos-forge:validar.');
+    expect(prompt).toContain('`aprovado`');
+    expect(prompt).not.toContain('ÚLTIMA linha');
+  });
+
+  it('arco que lança não derruba o supervisor — degrada para o checkpoint', async () => {
+    const f = makeFixtures();
+    const arcQuebrado: ArcPort = {
+      async read() {
+        throw new Error('python sumiu');
+      },
+    };
+    const { cli, tracker, sup, checkpoint } = makeArcLoop(f, arcQuebrado);
+    sup.start();
+    writeFileSync(checkpoint, 'ok\nDONE\n');
+    cli.last().finish(0);
+    await flush();
+    expect(tracker.transitions.some((t) => t.to === 'review_pending')).toBe(true);
   });
 });

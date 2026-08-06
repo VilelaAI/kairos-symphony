@@ -5,7 +5,7 @@
 
 **Status:** 🟢 M1-M5 implementados (TypeScript/Node) — **conformidade v0.3 da SPEC fechada**: happy path end-to-end com GitHub + Claude Code + kairos-forge, heartbeat cooperativo, hardening de PTY, reconstrução de estado, `/metrics` Prometheus + `/healthz`, audit log, sandbox de env, gate de harness-readiness e loop autônomo por issue; 161 testes verdes. SPEC em `0.4.0-draft`. Veja [SPEC.md](SPEC.md), [estado da implementação](#estado-da-implementação) e [roadmap](#roadmap).
 
-`kairos-symphony` é a camada de orquestração persistente do ecossistema KairOS. Pega os 45 agentes do [`kairos-forge`](https://github.com/VilelaAI/kairos-forge) (ou os agentes regulados do [`kairos-ai`](https://github.com/VilelaAI/kairos-ai)) e os põe pra trabalhar **continuamente** sobre um issue tracker — cada issue pega um agente dedicado, agentes rodam até o trabalho terminar, humano só revisa o resultado.
+`kairos-symphony` é a camada de orquestração persistente do ecossistema KairOS. Pega os 71 agentes do [`kairos-forge`](https://github.com/VilelaAI/kairos-forge) (ou os agentes regulados do [`kairos-ai`](https://github.com/VilelaAI/kairos-ai)) e os põe pra trabalhar **continuamente** sobre um issue tracker — cada issue pega um agente dedicado, agentes rodam até o trabalho terminar, humano só revisa o resultado.
 
 Inspirado pela [spec Symphony da OpenAI](https://openai.com/index/open-source-codex-orchestration-symphony/) (Apache 2.0, abril 2026), mas com 4 diferenças deliberadas:
 
@@ -14,7 +14,7 @@ Inspirado pela [spec Symphony da OpenAI](https://openai.com/index/open-source-co
 | Linear-only | GitHub primeiro, plugins pra GitLab/Jira/Linear |
 | Codex App Server (OpenAI-only) | Claude Code OU Codex OU OpenCode |
 | Reference em Elixir/BEAM | Implementação em Node/TS (multiplataforma, ecossistema maior) |
-| Genérico, sem persona curada | Acoplado ao Forge/kairos-ai (24+21 personas em PT-BR) |
+| Genérico, sem persona curada | Acoplado ao Forge/kairos-ai (40 core + 31 apoio em PT-BR) |
 
 ## Por que existe
 

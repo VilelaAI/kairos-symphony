@@ -10,6 +10,7 @@ import { dirname, join } from 'node:path';
 import type { AgentDescriptor } from '../domain/agent.js';
 import type { Issue, IssueId } from '../domain/issue.js';
 import type { WorkspaceInfo } from '../domain/workspace.js';
+import type { ArcPort, ArcState } from '../ports/arc.js';
 import type { AgentProcess, CliPort } from '../ports/cli.js';
 import type { Clock, TimerHandle } from '../ports/clock.js';
 import type { StateStore } from '../ports/store.js';
@@ -73,6 +74,15 @@ export interface SupervisorDeps {
   metrics?: MetricsSink | undefined;
   /** Runtime de loop autônomo (§17); ausente = single-shot. */
   loop?: LoopRuntime | undefined;
+  /**
+   * Arco da fábrica (contrato `kairos-forge/ciclo`). Quando presente E houver ciclo
+   * aberto no workspace, ele **substitui** o checkpoint como condição de parada: a
+   * transição passa a vir de uma máquina de estados determinística em vez da última
+   * linha de um arquivo que o próprio agente escreve.
+   *
+   * Ausente, ou sem ciclo aberto, o loop degrada para o checkpoint (§17.3).
+   */
+  arc?: ArcPort | undefined;
 }
 
 export class AgentSupervisor {
@@ -90,6 +100,7 @@ export class AgentSupervisor {
   private iteration = 0;
   private loopWarned = false;
   private stopping = false;
+  private ultimoArco: ArcState | null = null;
 
   constructor(private readonly deps: SupervisorDeps) {}
 
@@ -101,6 +112,18 @@ export class AgentSupervisor {
     return this.deps.loop !== undefined;
   }
 
+  /**
+   * Primeira leitura do arco, antes do primeiro `start()`. Quem cria o supervisor
+   * chama isto para que a iteração 1 já receba o `proximoPasso` no prompt — e para
+   * que o checkpoint não seja criado à toa quando o arco está no comando.
+   *
+   * Nunca lança e não é obrigatório: sem ele, o arco entra a partir da 2ª iteração.
+   */
+  async primeReadArc(): Promise<ArcState | null> {
+    if (!this.loopMode) return null;
+    return this.readArc();
+  }
+
   start(): void {
     this.state = 'spawning';
     const startedAt = this.deps.clock.now().toISOString();
@@ -108,7 +131,10 @@ export class AgentSupervisor {
     let prompt: string;
     let attempt: number;
     if (this.loopMode) {
-      if (this.iteration === 0) this.initCheckpoint();
+      // Checkpoint só é criado quando o arco NÃO está no comando — com arco, o estado
+      // canônico vive em `.agents/ciclo/` e um segundo lugar dizendo o progresso é a
+      // planilha paralela que o Forge recusa por princípio.
+      if (this.iteration === 0 && this.ultimoArco === null) this.initCheckpoint();
       this.iteration += 1;
       attempt = this.iteration;
       prompt = this.buildIterationPrompt();
@@ -514,6 +540,34 @@ export class AgentSupervisor {
         '',
       );
     }
+    const arc = this.ultimoArco;
+    if (arc) {
+      // Arco no comando: a condição de parada não é escrita pelo agente, é lida da
+      // máquina de estados. O prompt diz o passo e o que registrar — nada de "escreva
+      // DONE quando achar que terminou".
+      parts.push(
+        '## Arco da fábrica no comando (kairos-forge)',
+        '',
+        `Este trabalho é conduzido pelo arco da SPEC ${arc.spec}. Estado atual: \`${arc.estado}\`.`,
+        '',
+        `**Próximo passo:** ${arc.proximoPasso}`,
+        '',
+        `Ao terminar o passo, registre o resultado — e só vale um destes: ${arc.resultadosValidos
+          .map((r) => `\`${r}\``)
+          .join(', ')}.`,
+        '',
+        '```bash',
+        'python3 <plugin>/scripts/ciclo.py registrar <resultado>',
+        '```',
+        '',
+        'O `ciclo.py` recusa resultado inválido no estado, cobra o veredicto do relatório',
+        'em disco e conta o orçamento. **Não** escreva condição de parada em arquivo:',
+        'quem decide se o arco acabou é o script, não você.',
+        '',
+      );
+      return parts.join('\n');
+    }
+
     parts.push(
       '## Condição de parada',
       '',
@@ -525,9 +579,23 @@ export class AgentSupervisor {
     return parts.join('\n');
   }
 
+  /**
+   * Fim de iteração: **o arco decide, quando existe.**
+   *
+   * Ordem deliberada — o arco vem antes do checkpoint porque o checkpoint é escrito
+   * pelo agente e o arco não. Quando os dois existem, quem manda é o que o agente não
+   * controla.
+   */
   private async onIterationEnd(): Promise<void> {
     const loop = this.deps.loop;
     if (!loop) return;
+
+    const arc = await this.readArc();
+    if (arc) {
+      await this.onIterationEndByArc(arc, loop);
+      return;
+    }
+
     const last = this.readCheckpointLastLine();
 
     if (
@@ -571,6 +639,92 @@ export class AgentSupervisor {
       iteration: this.iteration,
       correlation_id: this.deps.correlationId,
       message: `Iteração ${this.iteration} concluída sem critério atingido — próxima iteração`,
+    });
+    this.start();
+  }
+
+  /** Lê o arco; null quando não há arco, não há ciclo aberto, ou a leitura falhou. */
+  private async readArc(): Promise<ArcState | null> {
+    if (!this.deps.arc) return null;
+    try {
+      const arc = await this.deps.arc.read(this.deps.workspace.path);
+      this.ultimoArco = arc;
+      return arc;
+    } catch {
+      return null; // arco quebrado nunca derruba o supervisor — degrada
+    }
+  }
+
+  /**
+   * Decide o fim da iteração pelo estado do arco (contrato `kairos-forge/ciclo`).
+   *
+   * Três desfechos, todos derivados do contrato — nenhum compara nome de estado:
+   *
+   *  · `aguardandoHumano` → **blocked**. É o gate humano do Forge encontrando o canal
+   *    do Symphony: a pergunta vai para a issue, a pessoa responde lá, e o próximo
+   *    dispatch continua de onde parou (o estado sobrevive em `.agents/ciclo/`).
+   *  · `terminal` → encerrado fecha em `review_pending`; escalado vira **blocked** com
+   *    o motivo que o próprio `ciclo.py` escreveu (orçamento sem progresso, teto,
+   *    escalação manual).
+   *  · nem um nem outro → próxima iteração, com `proximoPasso` no prompt.
+   *
+   * O teto de iterações do §17 continua valendo por cima: o arco tem orçamento próprio,
+   * mas quem paga o slot é o Symphony.
+   */
+  private async onIterationEndByArc(arc: ArcState, loop: LoopRuntime): Promise<void> {
+    const base = {
+      issue_id: this.deps.issue.id,
+      iteration: this.iteration,
+      correlation_id: this.deps.correlationId,
+      arc_estado: arc.estado,
+      arc_contrato: arc.contrato,
+    };
+
+    if (arc.aguardandoHumano) {
+      this.deps.log.info({
+        ...base,
+        event: 'arc_awaiting_human',
+        message: `Arco de ${arc.spec} aguarda decisão humana em '${arc.estado}'`,
+      });
+      this.markBlocked(`symphony:arc-aguardando-humano (${arc.estado}) — ${arc.proximoPasso}`);
+      return;
+    }
+
+    if (arc.terminal) {
+      const motivo = arc.motivoEscalacao ?? arc.motivoEncerramento;
+      if (arc.motivoEscalacao) {
+        this.deps.log.warn({
+          ...base,
+          event: 'arc_escalated',
+          message: `Arco de ${arc.spec} escalou: ${arc.motivoEscalacao}`,
+        });
+        this.markBlocked(`symphony:arc-escalado — ${arc.motivoEscalacao}`);
+        return;
+      }
+      this.deps.log.info({
+        ...base,
+        event: 'arc_completed',
+        message: `Arco de ${arc.spec} chegou a '${arc.estado}'${motivo ? `: ${motivo}` : ''}`,
+      });
+      await this.completeLoop();
+      return;
+    }
+
+    if (this.iteration >= loop.maxIterations) {
+      this.deps.log.warn({
+        ...base,
+        event: 'loop_max_iterations',
+        last_output: `arco em '${arc.estado}' — ${arc.proximoPasso}`,
+        message: `Loop da issue ${this.deps.issue.id} esgotou ${loop.maxIterations} iterações com o arco em '${arc.estado}'`,
+      });
+      this.markBlocked('symphony:max-iterations-exceeded');
+      return;
+    }
+
+    this.deps.log.info({
+      ...base,
+      event: 'arc_iteration_completed',
+      message: `Arco de ${arc.spec} em '${arc.estado}' — próxima iteração`,
     });
     this.start();
   }
